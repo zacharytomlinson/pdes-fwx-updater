@@ -218,7 +218,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "parking_lot",
  "percent-encoding",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
  "x11rb",
 ]
 
@@ -1313,6 +1313,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui_console"
+version = "0.2.0"
+source = "git+https://github.com/zacharytomlinson/egui_console.git#b170add27780255389951dee38c6c86fa610e939"
+dependencies = [
+ "egui",
+ "itertools 0.13.0",
+ "serde",
+ "serde_derive",
+]
+
+[[package]]
 name = "egui_extras"
 version = "0.33.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2248,6 +2259,15 @@ dependencies = [
  "hermit-abi 0.3.9",
  "libc",
  "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "itertools"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
+dependencies = [
+ "either",
 ]
 
 [[package]]
@@ -3231,6 +3251,7 @@ dependencies = [
  "eframe",
  "egui",
  "egui-file-dialog",
+ "egui_console",
  "egui_extras",
  "image",
  "probe-rs",
@@ -3446,7 +3467,7 @@ dependencies = [
  "futures-lite",
  "hidapi",
  "ihex",
- "itertools",
+ "itertools 0.14.0",
  "jep106",
  "nusb",
  "object",
@@ -3644,7 +3665,7 @@ dependencies = [
  "built",
  "cfg-if",
  "interpolate_name",
- "itertools",
+ "itertools 0.14.0",
  "libc",
  "libfuzzer-sys",
  "log",
