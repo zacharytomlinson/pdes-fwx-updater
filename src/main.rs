@@ -2,13 +2,14 @@
 
 mod flasher;
 
-use crate::flasher::ChipModel;
+use crate::flasher::{ChipModel, FlashVector};
 use eframe::epaint::Color32;
 use eframe::{egui, App, CreationContext, NativeOptions};
 use egui::{Align2, Area, Button, CentralPanel, Context, Id, RichText, Stroke, Vec2};
 use egui_console::{ConsoleBuilder, ConsoleWindow};
 use egui_file_dialog::FileDialog;
 use flasher::Flasher;
+use serialport;
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -113,58 +114,63 @@ impl FWUpdater {
             .display()
             .to_string();
         tokio::spawn(async move {
-            let _ = ot_tx.send("Connecting to Probe...".to_string());
-            ctx.request_repaint();
-            match flash.connect() {
-                Ok(probe) => {
-                    let _ = lp_tx.send(prog + 40.0);
-                    let _ = ot_tx.send("Attaching Probe to Target...".to_string());
-                    ctx.request_repaint();
-                    match flash.attach(probe) {
-                        Ok(session) => {
-                            let _ = lp_tx.send(prog + 5.0);
-                            let _ = ot_tx.send("Flashing Binary to Target".to_string());
-                            ctx.request_repaint();
-                            match flash.flash(session, path, |evt| {
-                                let _ = ot_tx.send(format!("{:#?}", evt));
+            if flash.flash_vector == FlashVector::Probe {
+                let _ = ot_tx.send("Connecting to Probe...".to_string());
+                ctx.request_repaint();
+                match flash.connect_probe() {
+                    Ok(probe) => {
+                        let _ = lp_tx.send(prog + 40.0);
+                        let _ = ot_tx.send("Attaching Probe to Target...".to_string());
+                        ctx.request_repaint();
+                        match flash.attach_probe(probe) {
+                            Ok(session) => {
+                                let _ = lp_tx.send(prog + 5.0);
+                                let _ = ot_tx.send("Flashing Binary to Target".to_string());
                                 ctx.request_repaint();
-                            }) {
-                                Ok(_) => {
-                                    let _ = lp_tx.send(prog + 5.0);
-                                    let _ = ot_tx.send("Flashing Successful!".to_string());
+                                match flash.flash(session, path, |evt| {
+                                    let _ = ot_tx.send(format!("{:#?}", evt));
                                     ctx.request_repaint();
-                                }
-                                Err(e) => {
-                                    let _ = ot_tx.send(e.to_string());
-                                    let _ = lp_tx.send(0.0);
-                                    ctx.request_repaint();
-                                    let _ = sleep(Duration::from_secs(10)).await;
-                                    let _ = ot_tx.send("Flashing failed... Did you try unplugging it and plugging it back in?".to_string());
-                                    return;
+                                }) {
+                                    Ok(_) => {
+                                        let _ = lp_tx.send(prog + 5.0);
+                                        let _ = ot_tx.send("Flashing Successful!".to_string());
+                                        ctx.request_repaint();
+                                    }
+                                    Err(e) => {
+                                        let _ = ot_tx.send(e.to_string());
+                                        let _ = lp_tx.send(0.0);
+                                        ctx.request_repaint();
+                                        let _ = sleep(Duration::from_secs(10)).await;
+                                        let _ = ot_tx.send("Flashing failed... Did you try unplugging it and plugging it back in?".to_string());
+                                        return;
+                                    }
                                 }
                             }
-                        }
-                        Err(e) => {
-                            let _ = ot_tx.send(e.to_string());
-                            let _ = lp_tx.send(0.0);
-                            ctx.request_repaint();
-                            let _ = sleep(Duration::from_secs(10)).await;
-                            let _ = ot_tx.send("Flashing failed... Did you try unplugging it and plugging it back in?".to_string());
-                            return;
+                            Err(e) => {
+                                let _ = ot_tx.send(e.to_string());
+                                let _ = lp_tx.send(0.0);
+                                ctx.request_repaint();
+                                let _ = sleep(Duration::from_secs(10)).await;
+                                let _ = ot_tx.send("Flashing failed... Did you try unplugging it and plugging it back in?".to_string());
+                                return;
+                            }
                         }
                     }
+                    Err(e) => {
+                        let _ = ot_tx.send(e.to_string());
+                        let _ = lp_tx.send(0.0);
+                        ctx.request_repaint();
+                        let _ = sleep(Duration::from_secs(10)).await;
+                        let _ = ot_tx.send(
+                            "Flashing failed... Did you try unplugging it and plugging it back in?"
+                                .to_string(),
+                        );
+                        return;
+                    }
                 }
-                Err(e) => {
-                    let _ = ot_tx.send(e.to_string());
-                    let _ = lp_tx.send(0.0);
-                    ctx.request_repaint();
-                    let _ = sleep(Duration::from_secs(10)).await;
-                    let _ = ot_tx.send(
-                        "Flashing failed... Did you try unplugging it and plugging it back in?"
-                            .to_string(),
-                    );
-                    return;
-                }
+            } else {
+                let _ = ot_tx.send("Flashing to Target...".to_string());
+
             }
         });
     }
@@ -240,6 +246,19 @@ impl App for FWUpdater {
                                                 "STM32F2",
                                             );
                                         });
+                                    ui.add(egui::Label::new("Port: "));
+                                    egui::ComboBox::from_label("")
+                                        .selected_text(format!(
+                                            "{:?}",
+                                            self.flasher.lock().unwrap().ports.clone()
+                                        ))
+                                        .width(ui.available_width() / 3.0)
+                                        .show_ui(ui, |ui| {
+                                            let mut flasher = self.flasher.lock().unwrap().clone();
+                                            for (k, v) in &flasher.ports {
+                                                ui.selectable_value(&mut flasher.selected_port, k.clone(), k);
+                                            }
+                                        });
                                 });
 
                                 ui.add_space(10.0);
@@ -288,8 +307,9 @@ impl App for FWUpdater {
                                     .stroke(Stroke::new(1.0, egui::Color32::DARK_BLUE));
                                     if ui.add_sized(Vec2::new(100.0, 25.0), button).clicked() {
                                         self.show_output = !self.show_output;
+                                        let flasher: Flasher = self.flasher.lock().unwrap().clone();
                                         self.start_flash_op(
-                                            *self.flasher.clone().lock().unwrap(),
+                                            flasher,
                                             self.ot_tx.clone(),
                                             self.lp_tx.clone(),
                                             ctx.clone(),
