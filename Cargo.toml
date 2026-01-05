@@ -14,7 +14,7 @@ tokio = { version = "1.48.0", features = ["full"] }
 egui_console = { git = "https://github.com/zacharytomlinson/egui_console.git", version = "0.2.0" }
 serialport = "4.7.3"
 cxx = "1.0.192"
-bossa = "2.3.0"
+bossa = "=2.2.0"
 
 
 

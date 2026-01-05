@@ -7,6 +7,10 @@ use probe_rs::{Permissions, Session};
 use serialport::{ErrorKind, SerialPortType, UsbPortInfo};
 use cxx::{let_cxx_string, UniquePtr};
 use bossa::lib;
+use std::ffi::CString;
+use std::ops::DerefMut;
+use std::os::raw::c_char;
+use eframe::glow::MAX;
 
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum ChipModel {
@@ -99,29 +103,45 @@ impl Flasher {
         si
     }
 
-    pub fn attach_usb(&self, samba: lib::Samba) -> Result<(), i32> {
-
+    pub fn attach_usb(&self, mut samba: UniquePtr<lib::Samba>) -> UniquePtr<lib::Flasher> {
+        let mut device = lib::new_device(samba.pin_mut());
+        device.pin_mut().create();
+        let mut observer = lib::new_bossa_observer();
+        lib::new_flasher(samba.pin_mut(), device.pin_mut(), observer.pin_mut())
     }
 
-    pub fn flash(&self, mut session: Session, path: String, handler: impl FnMut(ProgressEvent)) -> Result<(), FlashError> {
+    pub fn flash_via_probe(&self, mut session: Session, path: String, handler: impl FnMut(ProgressEvent)) -> Result<(), FlashError> {
         let file_path = Path::new(path.as_str());
-        if self.flash_vector == FlashVector::Probe {
-            let data = fs::read(file_path);
-            if data.is_err() {
-                println!("Unable to read flash data");
-                return Err(FlashError::PageWrite { page_address: 0, source: Box::new(data.unwrap_err()) });
-            }
-
-            let mut loader = session.target().flash_loader();
-            loader.add_data(0x2000, &data.unwrap())?;
-
-            let mut opts = DownloadOptions::new();
-            opts.do_chip_erase = true;
-            opts.verify = true;
-            opts.progress = FlashProgress::new(handler);
-            loader.commit(&mut session, opts)
-        } else {
-
+        let data = fs::read(file_path);
+        if data.is_err() {
+            println!("Unable to read flash data");
+            return Err(FlashError::PageWrite { page_address: 0, source: Box::new(data.unwrap_err()) });
         }
+
+        let mut loader = session.target().flash_loader();
+        loader.add_data(0x2000, &data.unwrap())?;
+
+        let mut opts = DownloadOptions::new();
+        opts.do_chip_erase = true;
+        opts.verify = true;
+        opts.progress = FlashProgress::new(handler);
+        loader.commit(&mut session, opts)
+    }
+
+    pub unsafe fn flash_via_usb(&self, samba_flash: UniquePtr<lib::Flasher>, path: String) -> u32 {
+        let c_str = CString::new(path).expect("CString::new failed");
+        let ptr: *const c_char = c_str.as_ptr();
+        let mut pe: u32 = 0u32;
+        let mut te: u32 = 0u32;
+        if let Some(reference) = samba_flash.as_ref() {
+            let sfl = reference.clone();
+            sfl.reset();
+            unsafe {
+                sfl.write(ptr, 0x2000);
+                sfl.verify(ptr, &mut pe, &mut te, 0x2000);
+                return te;
+            }
+        }
+        MAX
     }
 }

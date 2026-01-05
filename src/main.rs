@@ -14,6 +14,8 @@ use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use cxx::UniquePtr;
+use eframe::glow::MAX;
 use tokio::runtime::Runtime;
 use tokio::time::sleep;
 
@@ -127,7 +129,7 @@ impl FWUpdater {
                                 let _ = lp_tx.send(prog + 5.0);
                                 let _ = ot_tx.send("Flashing Binary to Target".to_string());
                                 ctx.request_repaint();
-                                match flash.flash(session, path, |evt| {
+                                match flash.flash_via_probe(session, path, |evt| {
                                     let _ = ot_tx.send(format!("{:#?}", evt));
                                     ctx.request_repaint();
                                 }) {
@@ -170,7 +172,24 @@ impl FWUpdater {
                 }
             } else {
                 let _ = ot_tx.send("Flashing to Target...".to_string());
-
+                match flash.connect_usb() {
+                    Ok(samba) => unsafe {
+                        let _ = ot_tx.send("Samba initialized".to_string());
+                        let sam: UniquePtr<bossa::lib::Flasher> = flash.attach_usb(samba);
+                        let _ = ot_tx.send("Flashing to chip".to_string());
+                        let flash_res: u32 = flash.flash_via_usb(sam, path);
+                        if flash_res < 1 {
+                            let _ = ot_tx.send("Flashing completed... Enjoy!".to_string());
+                        } else if flash_res >= 1 || flash_res < MAX {
+                            let _ = ot_tx.send(format!("Flash errors: {:?}", flash_res).to_string());
+                        } else {
+                            let _ = ot_tx.send("Flashing completely fucked".to_string());
+                        }
+                    },
+                    Err(e) => {
+                        let _ = ot_tx.send(e.to_string());
+                    }
+                }
             }
         });
     }
