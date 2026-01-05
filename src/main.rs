@@ -100,7 +100,7 @@ impl FWUpdater {
 
     fn start_flash_op(
         &mut self,
-        flash: Flasher,
+        mut flash: Flasher,
         ot_tx: Sender<String>,
         lp_tx: Sender<f32>,
         ctx: Context,
@@ -172,23 +172,32 @@ impl FWUpdater {
             } else {
                 let _ = ot_tx.send("Connecting to Target...".to_string());
                 ctx.request_repaint();
-                match flash.connect_usb() {
-                    Ok(samba) => unsafe {
-                        let _ = ot_tx.send("USB connection initialized".to_string());
+                match flash.trigger_bootloader_via_usb() {
+                    Ok(sp) => {
+                        let _ = ot_tx.send(format!("USB connection initialized on {:?}", flash.selected_port).to_string());
                         ctx.request_repaint();
-                        let sam: UniquePtr<bossa::lib::Flasher> = flash.attach_usb(samba);
-                        let _ = ot_tx.send("Flashing to chip".to_string());
-                        ctx.request_repaint();
-                        let flash_res: u32 = flash.flash_via_usb(sam, path);
-                        if flash_res < 1 {
-                            let _ = ot_tx.send("Flashing completed... Enjoy!".to_string());
-                            ctx.request_repaint();
-                        } else if flash_res >= 1 || flash_res < MAX {
-                            let _ = ot_tx.send(format!("Flash errors: {:?}", flash_res).to_string());
-                            ctx.request_repaint();
-                        } else {
-                            let _ = ot_tx.send("Flashing completely fucked".to_string());
-                            ctx.request_repaint();
+                        match flash.connect_to_bootloader(5000) {
+                            Ok(_) => {
+                                let _ = ot_tx.send(format!("Flashing to chip on {:?}", flash.selected_port).to_string());
+                                ctx.request_repaint();
+                                match flash.flash_via_usb(path, |evt| {
+                                    let _ = ot_tx.send(format!("{:#?}", evt));
+                                    ctx.request_repaint();
+                                }) {
+                                    Ok(_) => {
+                                        let _ = ot_tx.send("Flashing completed... enjoy!".to_string());
+                                        ctx.request_repaint();
+                                    },
+                                    Err(e) => {
+                                        let _ = ot_tx.send(e.to_string());
+                                        ctx.request_repaint();
+                                    }
+                                }
+                            },
+                            Err(e) => {
+                                let _ = ot_tx.send(e.to_string());
+                                ctx.request_repaint();
+                            }
                         }
                     },
                     Err(e) => {

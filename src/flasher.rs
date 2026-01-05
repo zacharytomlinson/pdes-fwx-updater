@@ -4,11 +4,15 @@ use std::path::Path;
 use probe_rs::flashing::{DownloadOptions, FlashProgress, ProgressEvent, FlashError};
 use probe_rs::probe::{list::Lister, DebugProbeError, DebugProbeInfo, Probe};
 use probe_rs::{Permissions, Session};
-use serialport::{ErrorKind, SerialPortType, UsbPortInfo};
+use serialport::{ErrorKind, SerialPort, SerialPortType, UsbPortInfo};
 use cxx::{let_cxx_string, UniquePtr};
-use bossa::lib;
 use std::ffi::CString;
 use std::os::raw::c_char;
+use std::process::{Command, Stdio};
+use std::thread::sleep;
+use std::time::{Duration, Instant};
+use anyhow::{anyhow, Error};
+use tokio::io::{AsyncBufReadExt, BufReader};
 
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum ChipModel {
@@ -40,15 +44,11 @@ impl Default for Flasher {
             selected_port: String::new(),
             flash_vector: FlashVector::Probe
         };
-        let ports = serialport::available_ports().expect("No ports found!");
-        for p in ports {
-            if let SerialPortType::UsbPort(info) = p.port_type {
-                me.ports.insert(p.port_name.clone(), info);
-                if me.selected_port.is_empty() {
-                    me.selected_port = p.port_name.clone();
-                }
-            }
+        me.ports = Self::populate_ports();
+        if me.selected_port.is_empty() && let Some((key, value)) = me.ports.iter().next() {
+            me.selected_port = key.to_string();
         }
+
         let lister: Lister = Lister::new();
         let probe_list: Vec<DebugProbeInfo> = lister.list_all();
         if probe_list.is_empty() {
@@ -67,31 +67,22 @@ impl Default for Flasher {
 
 impl Flasher {
 
+    fn populate_ports() -> HashMap<String, UsbPortInfo> {
+        let mut nu = HashMap::<String, UsbPortInfo>::new();
+        let ports = serialport::available_ports().expect("No ports found!");
+        for p in ports {
+            if let SerialPortType::UsbPort(info) = p.port_type {
+               nu.insert(p.port_name.clone(), info);
+            }
+        }
+        nu
+    }
+
     pub fn connect_probe(&self) -> Result<Probe, DebugProbeError> {
         if self.flash_vector == FlashVector::Probe {
             self.probes[0].open()
         } else {
             Err(DebugProbeError::TargetNotFound)
-        }
-    }
-
-    pub fn connect_usb(&self) -> Result<UniquePtr<lib::Samba>, ErrorKind> {
-        let mut samba = lib::new_samba();
-        let mut port_factory = lib::new_port_factory();
-
-        // Use default port (e.g. /dev/ttyACM0 on linux)
-        let_cxx_string!(port = self.selected_port.clone());
-
-        // Attempt to connect to the usb port
-        if !samba
-            .pin_mut()
-            .connect(port_factory.pin_mut().create_port(&port, true), 115200)
-        {
-            println!("Failed to connect to port: {}", port);
-            Err(ErrorKind::NoDevice)
-        } else {
-            println!("Successfully connected to port: {}", port);
-            Ok(samba)
         }
     }
 
@@ -103,17 +94,6 @@ impl Flasher {
             ChipModel::STM32F103C8 => si = probe.attach("STM32F2103C8", Permissions::default())
         }
         si
-    }
-
-    pub fn attach_usb(&self, mut samba: UniquePtr<lib::Samba>) -> UniquePtr<lib::Flasher> {
-        let mut device = lib::new_device(samba.pin_mut());
-        device.pin_mut().create();
-        let mut observer = lib::new_bossa_observer();
-        let mut flasher = lib::new_flasher(samba.pin_mut(), device.pin_mut(), observer.pin_mut());
-        let mut flasher_info = lib::new_flasher_info();
-        flasher.pin_mut().info(flasher_info.pin_mut());
-        flasher_info.pin_mut().print();
-        flasher
     }
 
     pub fn flash_via_probe(&self, mut session: Session, path: String, handler: impl FnMut(ProgressEvent)) -> Result<(), FlashError> {
@@ -134,21 +114,71 @@ impl Flasher {
         loader.commit(&mut session, opts)
     }
 
-    pub unsafe fn flash_via_usb(&self, mut samba_flash: UniquePtr<lib::Flasher>, path: String) -> u32 {
-        let c_str: CString = CString::new(path).expect("CString::new failed");
-        let ptr: *const c_char = c_str.as_ptr();
-        let mut pe: u32 = 0u32;
-        let mut te: u32 = 0u32;
-        let mut flasher_info = lib::new_flasher_info();
-        let mut info = lib::FlasherInfoRs::default();
-        lib::flasherinfo2flasherinfors(&flasher_info.pin_mut(), &mut info);
-        println!("{:#?}", info);
-        println!("Unique Id: {}", info.unique_id());
-        samba_flash.pin_mut().reset();
-        unsafe {
-            samba_flash.pin_mut().write(ptr, 0x2000);
-            samba_flash.pin_mut().verify(ptr, &mut pe, &mut te, 0x2000);
-            te
+    pub fn trigger_bootloader_via_usb(&self) -> serialport::Result<Box<dyn SerialPort>> {
+        serialport::new(self.selected_port, 1200)
+            .timeout(Duration::from_millis(100))
+            .open()
+    }
+
+    pub fn connect_to_bootloader(&mut self, timeout: u64) -> anyhow::Result<()> {
+        let start = Instant::now();
+
+        while start.elapsed() < Duration::from_secs(timeout) {
+            let existing = self.ports.clone();
+            let current = Self::populate_ports();
+            for port in &current {
+                if !existing.contains(port) {
+                    self.selected_port = port.0.to_string();
+                    return Ok(());
+                }
+            }
+            sleep(Duration::from_millis(250));
         }
+
+        Err(anyhow!("Timed out waiting for bootloader port"))
+    }
+
+    pub fn flash_via_usb(&self, path: String, mut on_line: impl FnMut(&str) + Send + 'static, ) -> anyhow::Result<()> {
+        let mut child = Command::new("bossac")
+            .args([
+                "-i",
+                "-d",
+                "--port", self.selected_port.as_str(),
+                "-U", "true",
+                "-e",
+                "-w", path.as_str(),
+                "-v",
+                "-b",
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+
+        let stdout = child.stdout.take().unwrap();
+        let stderr = child.stderr.take().unwrap();
+
+        let out_handle = tokio::spawn(move || {
+            let reader = BufReader::new(stdout);
+            for line in reader.lines().flatten() {
+                on_line(&line);
+            }
+        });
+
+        let err_handle = tokio::spawn(move || {
+            let reader = BufReader::new(stderr);
+            for line in reader.lines().flatten() {
+                on_line(&format!("ERR: {}", line));
+            }
+        });
+
+        let status = child.wait()?;
+        out_handle.join().ok();
+        err_handle.join().ok();
+
+        if !status.success() {
+            anyhow::bail!("bossac failed");
+        }
+
+        Ok(())
     }
 }
