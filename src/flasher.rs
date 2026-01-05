@@ -8,9 +8,7 @@ use serialport::{ErrorKind, SerialPortType, UsbPortInfo};
 use cxx::{let_cxx_string, UniquePtr};
 use bossa::lib;
 use std::ffi::CString;
-use std::ops::DerefMut;
 use std::os::raw::c_char;
-use eframe::glow::MAX;
 
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum ChipModel {
@@ -45,7 +43,10 @@ impl Default for Flasher {
         let ports = serialport::available_ports().expect("No ports found!");
         for p in ports {
             if let SerialPortType::UsbPort(info) = p.port_type {
-                me.ports.insert(p.port_name, info);
+                me.ports.insert(p.port_name.clone(), info);
+                if me.selected_port.is_empty() {
+                    me.selected_port = p.port_name.clone();
+                }
             }
         }
         let lister: Lister = Lister::new();
@@ -79,7 +80,7 @@ impl Flasher {
         let mut port_factory = lib::new_port_factory();
 
         // Use default port (e.g. /dev/ttyACM0 on linux)
-        let_cxx_string!(port = port_factory.pin_mut().default_name().to_string());
+        let_cxx_string!(port = self.selected_port.clone());
 
         // Attempt to connect to the usb port
         if !samba
@@ -89,6 +90,7 @@ impl Flasher {
             println!("Failed to connect to port: {}", port);
             Err(ErrorKind::NoDevice)
         } else {
+            println!("Successfully connected to port: {}", port);
             Ok(samba)
         }
     }
@@ -107,7 +109,11 @@ impl Flasher {
         let mut device = lib::new_device(samba.pin_mut());
         device.pin_mut().create();
         let mut observer = lib::new_bossa_observer();
-        lib::new_flasher(samba.pin_mut(), device.pin_mut(), observer.pin_mut())
+        let mut flasher = lib::new_flasher(samba.pin_mut(), device.pin_mut(), observer.pin_mut());
+        let mut flasher_info = lib::new_flasher_info();
+        flasher.pin_mut().info(flasher_info.pin_mut());
+        flasher_info.pin_mut().print();
+        flasher
     }
 
     pub fn flash_via_probe(&self, mut session: Session, path: String, handler: impl FnMut(ProgressEvent)) -> Result<(), FlashError> {
@@ -128,20 +134,21 @@ impl Flasher {
         loader.commit(&mut session, opts)
     }
 
-    pub unsafe fn flash_via_usb(&self, samba_flash: UniquePtr<lib::Flasher>, path: String) -> u32 {
-        let c_str = CString::new(path).expect("CString::new failed");
+    pub unsafe fn flash_via_usb(&self, mut samba_flash: UniquePtr<lib::Flasher>, path: String) -> u32 {
+        let c_str: CString = CString::new(path).expect("CString::new failed");
         let ptr: *const c_char = c_str.as_ptr();
         let mut pe: u32 = 0u32;
         let mut te: u32 = 0u32;
-        if let Some(reference) = samba_flash.as_ref() {
-            let sfl = reference.clone();
-            sfl.reset();
-            unsafe {
-                sfl.write(ptr, 0x2000);
-                sfl.verify(ptr, &mut pe, &mut te, 0x2000);
-                return te;
-            }
+        let mut flasher_info = lib::new_flasher_info();
+        let mut info = lib::FlasherInfoRs::default();
+        lib::flasherinfo2flasherinfors(&flasher_info.pin_mut(), &mut info);
+        println!("{:#?}", info);
+        println!("Unique Id: {}", info.unique_id());
+        samba_flash.pin_mut().reset();
+        unsafe {
+            samba_flash.pin_mut().write(ptr, 0x2000);
+            samba_flash.pin_mut().verify(ptr, &mut pe, &mut te, 0x2000);
+            te
         }
-        MAX
     }
 }

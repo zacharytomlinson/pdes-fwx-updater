@@ -9,7 +9,6 @@ use egui::{Align2, Area, Button, CentralPanel, Context, Id, RichText, Stroke, Ve
 use egui_console::{ConsoleBuilder, ConsoleWindow};
 use egui_file_dialog::FileDialog;
 use flasher::Flasher;
-use serialport;
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -171,23 +170,30 @@ impl FWUpdater {
                     }
                 }
             } else {
-                let _ = ot_tx.send("Flashing to Target...".to_string());
+                let _ = ot_tx.send("Connecting to Target...".to_string());
+                ctx.request_repaint();
                 match flash.connect_usb() {
                     Ok(samba) => unsafe {
-                        let _ = ot_tx.send("Samba initialized".to_string());
+                        let _ = ot_tx.send("USB connection initialized".to_string());
+                        ctx.request_repaint();
                         let sam: UniquePtr<bossa::lib::Flasher> = flash.attach_usb(samba);
                         let _ = ot_tx.send("Flashing to chip".to_string());
+                        ctx.request_repaint();
                         let flash_res: u32 = flash.flash_via_usb(sam, path);
                         if flash_res < 1 {
                             let _ = ot_tx.send("Flashing completed... Enjoy!".to_string());
+                            ctx.request_repaint();
                         } else if flash_res >= 1 || flash_res < MAX {
                             let _ = ot_tx.send(format!("Flash errors: {:?}", flash_res).to_string());
+                            ctx.request_repaint();
                         } else {
                             let _ = ot_tx.send("Flashing completely fucked".to_string());
+                            ctx.request_repaint();
                         }
                     },
                     Err(e) => {
-                        let _ = ot_tx.send(e.to_string());
+                        let _ = ot_tx.send(format!("Error connecting to usb port: {:?}", e).to_string());
+                        ctx.request_repaint();
                     }
                 }
             }
@@ -265,22 +271,27 @@ impl App for FWUpdater {
                                                 "STM32F2",
                                             );
                                         });
+                                });
+
+                                ui.add_space(5.0);
+
+                                ui.horizontal(|ui| {
                                     ui.add(egui::Label::new("Port: "));
-                                    egui::ComboBox::from_label("")
+                                    egui::ComboBox::from_label(" ")
                                         .selected_text(format!(
                                             "{:?}",
-                                            self.flasher.lock().unwrap().ports.clone()
+                                            self.flasher.lock().unwrap().selected_port.clone()
                                         ))
                                         .width(ui.available_width() / 3.0)
                                         .show_ui(ui, |ui| {
                                             let mut flasher = self.flasher.lock().unwrap().clone();
-                                            for (k, v) in &flasher.ports {
+                                            for (k, _v) in &flasher.ports {
                                                 ui.selectable_value(&mut flasher.selected_port, k.clone(), k);
                                             }
                                         });
                                 });
 
-                                ui.add_space(10.0);
+                                ui.add_space(5.0);
 
                                 if ui
                                     .add(
