@@ -1,3 +1,4 @@
+#![feature(trim_prefix_suffix)]
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
 mod flasher;
@@ -5,7 +6,7 @@ mod flasher;
 use crate::flasher::{ChipModel, FlashVector};
 use eframe::epaint::Color32;
 use eframe::{egui, App, CreationContext, NativeOptions};
-use egui::{Align2, Area, Button, CentralPanel, Context, Id, RichText, Stroke, Vec2};
+use egui::{Align2, Area, Button, CentralPanel, Id, RichText, Stroke, Vec2};
 use egui_console::{ConsoleBuilder, ConsoleWindow};
 use egui_file_dialog::FileDialog;
 use flasher::Flasher;
@@ -13,8 +14,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use cxx::UniquePtr;
-use eframe::glow::MAX;
+use anyhow::{anyhow, Context};
 use tokio::runtime::Runtime;
 use tokio::time::sleep;
 
@@ -83,7 +83,7 @@ impl FWUpdater {
         &mut self,
         stat_tx: Sender<ViewState>,
         lp_tx: Sender<f32>,
-        ctx: Context,
+        ctx: egui::Context,
     ) {
         let prog = *self.load_progress.clone().lock().unwrap();
         tokio::spawn(async move {
@@ -103,7 +103,7 @@ impl FWUpdater {
         mut flash: Flasher,
         ot_tx: Sender<String>,
         lp_tx: Sender<f32>,
-        ctx: Context,
+        ctx: egui::Context,
     ) {
         let prog = *self.load_progress.clone().lock().unwrap();
         let path = self
@@ -173,45 +173,42 @@ impl FWUpdater {
                 let _ = ot_tx.send("Connecting to Target...".to_string());
                 ctx.request_repaint();
                 match flash.trigger_bootloader_via_usb() {
-                    Ok(sp) => {
+                    Ok(_sp) => {
                         let _ = ot_tx.send(format!("USB connection initialized on {:?}", flash.selected_port).to_string());
                         ctx.request_repaint();
-                        match flash.connect_to_bootloader(5000) {
+                        match flash.connect_to_bootloader(5) {
                             Ok(_) => {
                                 let _ = ot_tx.send(format!("Flashing to chip on {:?}", flash.selected_port).to_string());
                                 ctx.request_repaint();
-                                match flash.flash_via_usb(path, |evt| {
+                                let _= flash.flash_via_usb(path, move |evt| {
                                     let _ = ot_tx.send(format!("{:#?}", evt));
                                     ctx.request_repaint();
-                                }) {
-                                    Ok(_) => {
-                                        let _ = ot_tx.send("Flashing completed... enjoy!".to_string());
-                                        ctx.request_repaint();
-                                    },
-                                    Err(e) => {
-                                        let _ = ot_tx.send(e.to_string());
-                                        ctx.request_repaint();
-                                    }
-                                }
+                                }).await.context("Flashing failed");
                             },
-                            Err(e) => {
-                                let _ = ot_tx.send(e.to_string());
+                            Err(_e) => {
+                                ot_tx.send(format!("Could not find serial port, defaulting to {:?}", flash.selected_port).to_string()).expect("Shits all fucked");
                                 ctx.request_repaint();
+                                println!("{}", path);
+                                println!("{:#?}", flash.selected_port);
+                                let _ = flash.flash_via_usb(path, move |evt| {
+                                    let _ = ot_tx.send(format!("{:#?}", evt));
+                                    ctx.request_repaint();
+                                }).await.context("Flashing failed");
                             }
                         }
                     },
                     Err(e) => {
-                        let _ = ot_tx.send(format!("Error connecting to usb port: {:?}", e).to_string());
+                        let _ = ot_tx.send(format!("Error connecting to usb port: {:?}", e.to_string()));
                         ctx.request_repaint();
                     }
-                }
+                };
             }
         });
     }
 }
 
 impl App for FWUpdater {
-    fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui_extras::install_image_loaders(ctx);
         self.fd.lock().unwrap().update(ctx);
 

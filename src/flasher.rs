@@ -4,15 +4,13 @@ use std::path::Path;
 use probe_rs::flashing::{DownloadOptions, FlashProgress, ProgressEvent, FlashError};
 use probe_rs::probe::{list::Lister, DebugProbeError, DebugProbeInfo, Probe};
 use probe_rs::{Permissions, Session};
-use serialport::{ErrorKind, SerialPort, SerialPortType, UsbPortInfo};
-use cxx::{let_cxx_string, UniquePtr};
-use std::ffi::CString;
-use std::os::raw::c_char;
-use std::process::{Command, Stdio};
+use serialport::{SerialPort, SerialPortType, UsbPortInfo};
+use std::process::Stdio;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
-use anyhow::{anyhow, Error};
+use anyhow::anyhow;
 use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Command;
 
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum ChipModel {
@@ -45,7 +43,7 @@ impl Default for Flasher {
             flash_vector: FlashVector::Probe
         };
         me.ports = Self::populate_ports();
-        if me.selected_port.is_empty() && let Some((key, value)) = me.ports.iter().next() {
+        if me.selected_port.is_empty() && let Some((key, _value)) = me.ports.iter().next() {
             me.selected_port = key.to_string();
         }
 
@@ -114,10 +112,11 @@ impl Flasher {
         loader.commit(&mut session, opts)
     }
 
-    pub fn trigger_bootloader_via_usb(&self) -> serialport::Result<Box<dyn SerialPort>> {
-        serialport::new(self.selected_port, 1200)
+    pub fn trigger_bootloader_via_usb(&self) -> anyhow::Result<()> {
+        let _ = serialport::new(self.selected_port.clone(), 1200)
             .timeout(Duration::from_millis(100))
-            .open()
+            .open();
+        Ok(())
     }
 
     pub fn connect_to_bootloader(&mut self, timeout: u64) -> anyhow::Result<()> {
@@ -127,7 +126,7 @@ impl Flasher {
             let existing = self.ports.clone();
             let current = Self::populate_ports();
             for port in &current {
-                if !existing.contains(port) {
+                if !existing.contains_key(port.0.as_str()) {
                     self.selected_port = port.0.to_string();
                     return Ok(());
                 }
@@ -138,45 +137,51 @@ impl Flasher {
         Err(anyhow!("Timed out waiting for bootloader port"))
     }
 
-    pub fn flash_via_usb(&self, path: String, mut on_line: impl FnMut(&str) + Send + 'static, ) -> anyhow::Result<()> {
+    pub async fn flash_via_usb(&self, path: String, mut on_line: impl FnMut(&str) + Send + 'static, ) -> anyhow::Result<()> {
+        //"/home/arch/.arduino15/packages/arduino/tools/bossac/1.7.0-arduino3/bossac" -i -d --port=ttyACM0 -U true -i -e -w -v "/home/arch/.cache/arduino/sketches/A5A9B19BBB40C6A3656AB42EF73C1D25/Blink.ino.bin" -R
         let mut child = Command::new("bossac")
             .args([
                 "-i",
                 "-d",
-                "--port", self.selected_port.as_str(),
-                "-U", "true",
+                format!("--port={}", self.selected_port.trim_prefix("/dev/")).as_str(),
+                "-U=true",
                 "-e",
-                "-w", path.as_str(),
+                "-w",
                 "-v",
-                "-b",
+                path.as_str(),
+                "-R",
             ])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()?;
 
-        let stdout = child.stdout.take().unwrap();
-        let stderr = child.stderr.take().unwrap();
+        let stdout = child.stdout.take().ok_or_else(|| anyhow!("No stdout"))?;
+        let stderr = child.stderr.take().ok_or_else(|| anyhow!("No stderr"))?;
 
-        let out_handle = tokio::spawn(move || {
-            let reader = BufReader::new(stdout);
-            for line in reader.lines().flatten() {
-                on_line(&line);
+        let mut stdout_reader = BufReader::new(stdout).lines();
+        let mut stderr_reader = BufReader::new(stderr).lines();
+
+        // Read stdout + stderr concurrently
+        loop {
+            tokio::select! {
+            line = stdout_reader.next_line() => {
+                match line? {
+                    Some(l) => on_line(l.as_str()),
+                    None => break,
+                }
             }
-        });
-
-        let err_handle = tokio::spawn(move || {
-            let reader = BufReader::new(stderr);
-            for line in reader.lines().flatten() {
-                on_line(&format!("ERR: {}", line));
+            line = stderr_reader.next_line() => {
+                match line? {
+                    Some(l) => on_line(format!("ERR: {}", l).as_str()),
+                    None => break,
+                }
             }
-        });
+        }
+        }
 
-        let status = child.wait()?;
-        out_handle.join().ok();
-        err_handle.join().ok();
-
+        let status = child.wait().await?;
         if !status.success() {
-            anyhow::bail!("bossac failed");
+            return Err(anyhow!(status.to_string()));
         }
 
         Ok(())
