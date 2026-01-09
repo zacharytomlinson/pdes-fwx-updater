@@ -148,6 +148,7 @@ impl Flasher {
                 "-e",
                 "-w",
                 "-v",
+                "--offset=0x2000",
                 path.as_str(),
                 "-R",
             ])
