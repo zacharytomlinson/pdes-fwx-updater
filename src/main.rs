@@ -58,9 +58,9 @@ impl Default for FWUpdater {
             fd_text: "Select Binary to Flash".to_string(),
             show_output: false,
             console: ConsoleBuilder::new()
-                .prompt("PDES >>")
-                .history_size(100)
-                .scrollback_size(10)
+                .prompt("PDES Flasher starting...")
+                .history_size(1000)
+                .scrollback_size(1000)
                 .build(),
 
             lp_rx,
@@ -313,7 +313,7 @@ impl App for FWUpdater {
                         ui.add_space(15.0);
 
                         Area::new(Id::from("middle_center_area"))
-                            .anchor(Align2::CENTER_CENTER, [0.0, 50.0])
+                            .anchor(Align2::CENTER_CENTER, [5.0, 50.0])
                             .default_height(ui.available_height() * 0.70)
                             .default_width(ui.available_width() * 0.9)
                             .show(ctx, |ui| {

@@ -141,16 +141,15 @@ impl Flasher {
         //"/home/arch/.arduino15/packages/arduino/tools/bossac/1.7.0-arduino3/bossac" -i -d --port=ttyACM0 -U true -i -e -w -v "/home/arch/.cache/arduino/sketches/A5A9B19BBB40C6A3656AB42EF73C1D25/Blink.ino.bin" -R
         let mut child = Command::new("bossac")
             .args([
+                format!("--port={}", self.selected_port.trim_prefix("/dev/")).as_str(),
                 "-i",
                 "-d",
-                format!("--port={}", self.selected_port.trim_prefix("/dev/")).as_str(),
-                "-U=true",
                 "-e",
                 "-w",
                 "-v",
                 "--offset=0x2000",
                 path.as_str(),
-                "-R",
+                "-R"
             ])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
