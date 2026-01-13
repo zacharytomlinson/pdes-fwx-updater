@@ -1,3 +1,9 @@
+//! PDES Firmware Updater application entrypoint and UI.
+//! Author: Zachary Tomlinson <ztomlinson7@gmail.com>
+//! Version: v1.0.0
+//! Date: 2025-02-12
+//! Cross-platform egui/eframe desktop UI for flashing PDES firmware, handling
+//! probe and USB vectors plus installer bootstrap per platform.
 #![feature(trim_prefix_suffix)]
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
@@ -112,11 +118,13 @@ impl Default for FWUpdater {
 }
 
 impl FWUpdater {
+    /// Construct the UI with default state.
     fn new(_cc: &CreationContext<'_>) -> Self {
         Default::default()
     }
 
     // Simulate loading or perform actual loading tasks here
+    /// Kick off installer/bootstrap work while updating the splash progress bar.
     fn update_progress_bar(
         &mut self,
         stat_tx: Sender<ViewState>,
@@ -168,6 +176,7 @@ impl FWUpdater {
         });
     }
 
+    /// Start flashing operation, dispatching to probe or USB depending on flash vector.
     fn start_flash_op(
         &mut self,
         mut flash: Flasher,
@@ -332,6 +341,7 @@ impl FWUpdater {
         });
     }
 
+    /// Publish pending flash result after console output has been quiet briefly.
     fn maybe_publish_result(&mut self, now: Instant) {
         if self.flash_result.is_none()
             && let Some(outcome) = self.pending_result.clone()

@@ -2,6 +2,8 @@
 name = "pdes-win-fw-updater"
 version = "0.1.0"
 edition = "2024"
+description = "Cross-platform PDES firmware updater with Windows MSI and Debian packaging."
+license-file = "LICENSE.txt"
 
 [dependencies]
 egui = "0.33.2"
@@ -30,7 +32,7 @@ assets = [
     ["assets/linux/icons/icon-48x48.png", "usr/share/icons/hicolor/48x48/apps/pdes.png", "644"],
     ["assets/linux/icons/icon-32x32.png", "usr/share/icons/hicolor/32x32/apps/pdes.png", "644"],
     ["assets/linux/icons/icon-16x16.png", "usr/share/icons/hicolor/16x16/apps/pdes.png", "644"],
-    ["assets", "opt/pdes-win-fw-updater/assets", "755"],
+    ["assets/", "opt/pdes-win-fw-updater/assets", "755"],
     ["scripts/linux/pdes-linux-installer.sh", "opt/pdes-win-fw-updater/pdes-linux-installer.sh", "755"],
     ["tools/linux/bossac", "opt/pdes-win-fw-updater/tools/bossac", "755"],
     ["packaging/linux/99-pdes.rules", "lib/udev/rules.d/99-pdes.rules", "644"],

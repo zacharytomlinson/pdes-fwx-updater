@@ -1,3 +1,9 @@
+//! PDES Firmware Updater flashing utilities.
+//! Author: Zachary Tomlinson <ztomlinson7@gmail.com>
+//! Version: v1.0.0
+//! Date: 2025-02-12
+//! Handles probe-rs flashing and USB bossac invocation with bundled-tool lookup
+//! for both Windows and Linux distributions.
 use anyhow::anyhow;
 use probe_rs::flashing::{DownloadOptions, FlashError, FlashProgress, ProgressEvent};
 use probe_rs::probe::{DebugProbeError, DebugProbeInfo, Probe, list::Lister};
@@ -67,6 +73,7 @@ impl Default for Flasher {
 }
 
 impl Flasher {
+    /// Discover available USB serial ports and map them by port name.
     fn populate_ports() -> HashMap<String, UsbPortInfo> {
         let mut nu = HashMap::<String, UsbPortInfo>::new();
         let ports = serialport::available_ports().expect("No ports found!");
@@ -78,6 +85,7 @@ impl Flasher {
         nu
     }
 
+    /// Open the first detected debug probe when flashing via probe.
     pub fn connect_probe(&self) -> Result<Probe, DebugProbeError> {
         if self.flash_vector == FlashVector::Probe {
             self.probes[0].open()
@@ -86,6 +94,7 @@ impl Flasher {
         }
     }
 
+    /// Attach a probe-rs session to the selected chip model.
     pub fn attach_probe(&self, probe: Probe) -> Result<Session, probe_rs::Error> {
         // Attach to a chip.
         match self.chip {
@@ -94,6 +103,7 @@ impl Flasher {
         }
     }
 
+    /// Flash the binary via probe-rs with progress reporting.
     pub fn flash_via_probe(
         &self,
         mut session: Session,
@@ -119,6 +129,7 @@ impl Flasher {
         loader.commit(&mut session, opts)
     }
 
+    /// Toggle a USB device into bootloader mode by opening at 1200 baud.
     pub fn trigger_bootloader_via_usb(&self) -> anyhow::Result<()> {
         let _ = serialport::new(self.selected_port.clone(), 1200)
             .timeout(Duration::from_millis(100))
@@ -126,6 +137,7 @@ impl Flasher {
         Ok(())
     }
 
+    /// Wait for the bootloader device to enumerate within the timeout.
     pub fn connect_to_bootloader(&mut self, timeout: u64) -> anyhow::Result<()> {
         let start = Instant::now();
 
@@ -144,6 +156,7 @@ impl Flasher {
         Err(anyhow!("Timed out waiting for bootloader port"))
     }
 
+    /// Flash via USB using bossac, streaming output to the callback.
     pub async fn flash_via_usb(
         &self,
         bin_path: String,
