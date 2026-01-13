@@ -1,0 +1,48 @@
+#!/bin/sh
+set -e
+
+INSTALL_ROOT="/opt/pdes-win-fw-updater"
+TOOLS_DIR="$INSTALL_ROOT/tools"
+BOSSAC_PATH="$TOOLS_DIR/bossac"
+BOSSAC_VERSION="1.9.1"
+BOSSAC_URL="https://github.com/shumatech/BOSSA/releases/download/${BOSSAC_VERSION}/bossac-${BOSSAC_VERSION}-x86_64-linux.tar.gz"
+
+# Reload udev rules shipped with the package
+if command -v udevadm >/dev/null 2>&1; then
+    udevadm control --reload-rules || true
+    udevadm trigger || true
+fi
+
+mkdir -p "$TOOLS_DIR"
+
+# Fetch bossac if it is not bundled at install time
+if [ ! -x "$BOSSAC_PATH" ]; then
+    tmpdir=$(mktemp -d)
+    fetch_ok=0
+    if command -v curl >/dev/null 2>&1; then
+        curl -L -o "$tmpdir/bossac.tar.gz" "$BOSSAC_URL" && fetch_ok=1
+    elif command -v wget >/dev/null 2>&1; then
+        wget -O "$tmpdir/bossac.tar.gz" "$BOSSAC_URL" && fetch_ok=1
+    fi
+
+    if [ "$fetch_ok" -eq 1 ]; then
+        tar -xzf "$tmpdir/bossac.tar.gz" -C "$tmpdir"
+        install -m755 "$tmpdir/bossac" "$BOSSAC_PATH"
+    else
+        echo "bossac not bundled and curl/wget unavailable; please install bossac manually." >&2
+    fi
+    rm -rf "$tmpdir"
+fi
+
+# Ensure the installing user has dialout access for serial devices
+TARGET_USER=${SUDO_USER:-$(logname 2>/dev/null || true)}
+if [ -n "$TARGET_USER" ] && ! id -nG "$TARGET_USER" 2>/dev/null | grep -qw dialout; then
+    if command -v adduser >/dev/null 2>&1; then
+        adduser "$TARGET_USER" dialout || true
+    elif command -v usermod >/dev/null 2>&1; then
+        usermod -aG dialout "$TARGET_USER" || true
+    fi
+    echo "User '$TARGET_USER' may need to re-login for dialout group membership to take effect."
+fi
+
+exit 0

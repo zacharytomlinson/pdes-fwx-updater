@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=PDES Firmware Updater
+Comment=Flash PDES firmware over USB or probe
+Exec=/usr/bin/pdes-win-fw-updater
+Icon=pdes
+Terminal=false
+Categories=Utility;Development;

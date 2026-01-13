@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product
+    Id="*"
+    Name="PDES Firmware Updater"
+    Language="1033"
+    Version="0.1.0"
+    Manufacturer="Palo Duro Embedded Systems"
+    UpgradeCode="9F8C1B76-2D0F-4EC7-9145-19B79381B190">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" Platform="x64" />
+    <MediaTemplate EmbedCab="yes" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of PDES Firmware Updater is already installed." />
+
+    <Property Id="ARPHELPLINK" Value="https://example.com/pdes" />
+    <Icon Id="ProductIcon" SourceFile="$(var.SourceDir)\assets\windows\icons\icon.ico" />
+    <Property Id="ARPPRODUCTICON" Value="ProductIcon" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLDIR" Name="PDES" />
+      </Directory>
+    </Directory>
+
+    <Feature Id="MainFeature" Title="PDES Firmware Updater" Level="1">
+      <ComponentGroupRef Id="PDESPayload" />
+    </Feature>
+  </Product>
+</Wix>

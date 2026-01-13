@@ -91,3 +91,16 @@ echo "✅ bossac ${BOSSAC_VERSION} installed successfully"
 echo "✅ udev rules installed: $UDEV_RULES_FILE"
 echo "ℹ️  You may need to unplug and replug your Arduino"
 
+cat "[Desktop Entry]
+Version=1.0
+Type=Application
+Name=PDES
+Comment=PDES Application
+Exec=/opt/pdes/pdes
+Icon=/opt/pdes/pdes.png
+Terminal=false
+Categories=Utility;" > ~/.local/share/applications/pdes.desktop
+
+chmod +x ~/.local/share/applications/pdes.desktop
+cp ~/.local/share/applications/pdes.desktop ~/Desktop/
+chmod +x ~/Desktop/pdes.desktop
