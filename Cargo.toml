@@ -1,6 +1,6 @@
 [package]
 name = "pdes-win-fw-updater"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Cross-platform PDES firmware updater with Windows MSI and Debian packaging."
 license-file = "LICENSE.txt"
@@ -8,14 +8,26 @@ license-file = "LICENSE.txt"
 [dependencies]
 egui = "0.33.2"
 eframe = "0.33.2"
-egui_extras = { version = "0.33.2", features = ["all_loaders"] }
-image = { version = "0.25.9", features = ["png"] }
 probe-rs = "0.30.0"
 egui-file-dialog = "0.12.0"
-tokio = { version = "1.48.0", features = ["full"] }
-egui_console = { git = "https://github.com/zacharytomlinson/egui_console.git", version = "0.2.0" }
 serialport = "4.7.3"
 anyhow = "1.0.100"
+
+[dependencies.egui_extras]
+version = "0.33.2"
+features = [ "all_loaders",]
+
+[dependencies.image]
+version = "0.25.9"
+features = [ "png",]
+
+[dependencies.tokio]
+version = "1.48.0"
+features = [ "full",]
+
+[dependencies.egui_console]
+git = "https://github.com/zacharytomlinson/egui_console.git"
+version = "0.2.0"
 
 [package.metadata.deb]
 name = "pdes-win-fw-updater"
@@ -23,19 +35,5 @@ maintainer = "PDES <dev@pdes.local>"
 section = "utils"
 priority = "optional"
 depends = "udev, adduser, curl | wget"
-assets = [
-    ["target/release/pdes-win-fw-updater", "usr/bin/pdes-win-fw-updater", "755"],
-    ["assets/linux/icons/icon-512x512.png", "usr/share/icons/hicolor/512x512/apps/pdes.png", "644"],
-    ["assets/linux/icons/icon-256x256.png", "usr/share/icons/hicolor/256x256/apps/pdes.png", "644"],
-    ["assets/linux/icons/icon-128x128.png", "usr/share/icons/hicolor/128x128/apps/pdes.png", "644"],
-    ["assets/linux/icons/icon-64x64.png", "usr/share/icons/hicolor/64x64/apps/pdes.png", "644"],
-    ["assets/linux/icons/icon-48x48.png", "usr/share/icons/hicolor/48x48/apps/pdes.png", "644"],
-    ["assets/linux/icons/icon-32x32.png", "usr/share/icons/hicolor/32x32/apps/pdes.png", "644"],
-    ["assets/linux/icons/icon-16x16.png", "usr/share/icons/hicolor/16x16/apps/pdes.png", "644"],
-    ["assets/", "opt/pdes-win-fw-updater/assets", "755"],
-    ["scripts/linux/pdes-linux-installer.sh", "opt/pdes-win-fw-updater/pdes-linux-installer.sh", "755"],
-    ["tools/linux/bossac", "opt/pdes-win-fw-updater/tools/bossac", "755"],
-    ["packaging/linux/99-pdes.rules", "lib/udev/rules.d/99-pdes.rules", "644"],
-    ["packaging/linux/pdes.desktop", "usr/share/applications/pdes.desktop", "644"]
-]
+assets = [ [ "target/release/pdes-win-fw-updater", "usr/bin/pdes-win-fw-updater", "755",], [ "assets/linux/icons/icon-512x512.png", "usr/share/icons/hicolor/512x512/apps/pdes.png", "644",], [ "assets/linux/icons/icon-256x256.png", "usr/share/icons/hicolor/256x256/apps/pdes.png", "644",], [ "assets/linux/icons/icon-128x128.png", "usr/share/icons/hicolor/128x128/apps/pdes.png", "644",], [ "assets/linux/icons/icon-64x64.png", "usr/share/icons/hicolor/64x64/apps/pdes.png", "644",], [ "assets/linux/icons/icon-48x48.png", "usr/share/icons/hicolor/48x48/apps/pdes.png", "644",], [ "assets/linux/icons/icon-32x32.png", "usr/share/icons/hicolor/32x32/apps/pdes.png", "644",], [ "assets/linux/icons/icon-16x16.png", "usr/share/icons/hicolor/16x16/apps/pdes.png", "644",], [ "assets/", "opt/pdes-win-fw-updater/assets", "755",], [ "scripts/linux/pdes-linux-installer.sh", "opt/pdes-win-fw-updater/pdes-linux-installer.sh", "755",], [ "tools/linux/bossac", "opt/pdes-win-fw-updater/tools/bossac", "755",], [ "packaging/linux/99-pdes.rules", "lib/udev/rules.d/99-pdes.rules", "644",], [ "packaging/linux/pdes.desktop", "usr/share/applications/pdes.desktop", "644",],]
 maintainer-scripts = "packaging/linux/scripts"
