@@ -256,7 +256,6 @@ mod tests {
     use super::Flasher;
     use std::env;
     use std::fs;
-    use std::path::PathBuf;
 
     #[test]
     fn bossac_path_respects_env_override() {
