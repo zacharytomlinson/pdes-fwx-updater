@@ -18,7 +18,7 @@ jobs:
 
       - name: Install toolchain
         run: |
-          rustup toolchain install $RUSTUP_TOOLCHAIN --component clippy rustfmt
+          rustup toolchain install $RUSTUP_TOOLCHAIN --component clippy --component rustfmt
           rustup default $RUSTUP_TOOLCHAIN
 
       - name: Install system dependencies
