@@ -12,7 +12,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       RUSTUP_TOOLCHAIN: nightly
-      BOSSAC_VERSION: "1.9.1"
     steps:
       - name: Check out sources
         uses: actions/checkout@v4
@@ -33,20 +32,19 @@ jobs:
           rustup toolchain install $RUSTUP_TOOLCHAIN --component clippy --component rustfmt
           rustup default $RUSTUP_TOOLCHAIN
 
-      - name: Fetch Linux tools (bossac)
-        run: |
-          set -euo pipefail
-          mkdir -p tools/linux
-          url="https://github.com/shumatech/BOSSA/releases/download/${BOSSAC_VERSION}/bossac-${BOSSAC_VERSION}-x86_64-linux.tar.gz"
-          curl -L "$url" -o /tmp/bossac.tar.gz
-          tar -xzf /tmp/bossac.tar.gz -C tools/linux
-          chmod +x tools/linux/bossac
-          rm -f /tmp/bossac.tar.gz
-
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libudev-dev pkg-config fakeroot curl
+
+      - name: Fetch Linux tools (bossac)
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y bossac
+          mkdir -p tools/linux
+          cp "$(command -v bossac)" tools/linux/bossac
+          chmod +x tools/linux/bossac
 
       - name: Install cargo-deb
         run: cargo install cargo-deb
