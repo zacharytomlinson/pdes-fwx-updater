@@ -220,28 +220,28 @@ impl Flasher {
             }
         }
 
-        if let Ok(exe_path) = env::current_exe() {
-            if let Some(dir) = exe_path.parent() {
-                let bundled = dir.join("tools").join(bossac_name);
-                if bundled.exists() {
-                    return bundled;
-                }
+        if let Ok(exe_path) = env::current_exe()
+            && let Some(dir) = exe_path.parent()
+        {
+            let bundled = dir.join("tools").join(bossac_name);
+            if bundled.exists() {
+                return bundled;
+            }
 
-                // Debian package installs tools under /opt
-                let opt_bundled = Path::new("/opt/pdes-win-fw-updater/tools").join(bossac_name);
-                if opt_bundled.exists() {
-                    return opt_bundled;
-                }
+            // Debian package installs tools under /opt
+            let opt_bundled = Path::new("/opt/pdes-win-fw-updater/tools").join(bossac_name);
+            if opt_bundled.exists() {
+                return opt_bundled;
+            }
 
-                // Dev tree: repo_root/tools/{windows|linux}/bossac*
-                if let Some(repo_root) = dir.parent().and_then(|p| p.parent()) {
-                    let repo_bundled = repo_root
-                        .join("tools")
-                        .join(if cfg!(windows) { "windows" } else { "linux" })
-                        .join(bossac_name);
-                    if repo_bundled.exists() {
-                        return repo_bundled;
-                    }
+            // Dev tree: repo_root/tools/{windows|linux}/bossac*
+            if let Some(repo_root) = dir.parent().and_then(|p| p.parent()) {
+                let repo_bundled = repo_root
+                    .join("tools")
+                    .join(if cfg!(windows) { "windows" } else { "linux" })
+                    .join(bossac_name);
+                if repo_bundled.exists() {
+                    return repo_bundled;
                 }
             }
         }
@@ -285,6 +285,6 @@ mod tests {
         assert_eq!(resolved, forced);
 
         // cleanup temp file
-        let _ = fs::remove_file(PathBuf::from(forced));
+        let _ = fs::remove_file(forced);
     }
 }

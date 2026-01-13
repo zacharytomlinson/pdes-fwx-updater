@@ -333,13 +333,12 @@ impl FWUpdater {
     }
 
     fn maybe_publish_result(&mut self, now: Instant) {
-        if self.flash_result.is_none() {
-            if let Some(outcome) = self.pending_result.clone() {
-                if now.duration_since(self.last_output) > Duration::from_millis(300) {
-                    self.flash_result = Some(outcome);
-                    self.pending_result = None;
-                }
-            }
+        if self.flash_result.is_none()
+            && let Some(outcome) = self.pending_result.clone()
+            && now.duration_since(self.last_output) > Duration::from_millis(300)
+        {
+            self.flash_result = Some(outcome);
+            self.pending_result = None;
         }
     }
 }
@@ -581,9 +580,11 @@ mod tests {
 
     #[test]
     fn pending_result_waits_for_quiet_console() {
-        let mut app = FWUpdater::default();
-        app.pending_result = Some(FlashOutcome::Success);
-        app.last_output = Instant::now();
+        let mut app = FWUpdater {
+            pending_result: Some(FlashOutcome::Success),
+            last_output: Instant::now(),
+            ..Default::default()
+        };
 
         let now = app.last_output + Duration::from_millis(200);
         app.maybe_publish_result(now);
@@ -594,9 +595,11 @@ mod tests {
 
     #[test]
     fn pending_result_publishes_after_quiet_period() {
-        let mut app = FWUpdater::default();
-        app.pending_result = Some(FlashOutcome::Success);
-        app.last_output = Instant::now() - Duration::from_millis(400);
+        let mut app = FWUpdater {
+            pending_result: Some(FlashOutcome::Success),
+            last_output: Instant::now() - Duration::from_millis(400),
+            ..Default::default()
+        };
 
         let now = Instant::now();
         app.maybe_publish_result(now);
