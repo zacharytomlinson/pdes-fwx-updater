@@ -40,10 +40,12 @@ jobs:
       - name: Fetch Linux tools (bossac)
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y bossac
+          BOSSAC_VERSION="1.9.1"
           mkdir -p tools/linux
-          cp "$(command -v bossac)" tools/linux/bossac
+          url="https://github.com/shumatech/BOSSA/releases/download/${BOSSAC_VERSION}/bossa-${BOSSAC_VERSION}-x86_64-linux.tar.bz2"
+          curl -L "$url" -o /tmp/bossa.tar.bz2
+          tar -xjf /tmp/bossa.tar.bz2 -C /tmp
+          cp /tmp/bossa-${BOSSAC_VERSION}/bossac tools/linux/bossac
           chmod +x tools/linux/bossac
 
       - name: Install cargo-deb
