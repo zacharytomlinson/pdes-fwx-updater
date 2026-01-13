@@ -42,11 +42,41 @@ jobs:
           set -euo pipefail
           BOSSAC_VERSION="1.9.1"
           mkdir -p tools/linux
-          url="https://github.com/shumatech/BOSSA/releases/download/${BOSSAC_VERSION}/bossa-${BOSSAC_VERSION}-x86_64-linux.tar.bz2"
-          curl -L "$url" -o /tmp/bossa.tar.bz2
-          tar -xjf /tmp/bossa.tar.bz2 -C /tmp
-          cp /tmp/bossa-${BOSSAC_VERSION}/bossac tools/linux/bossac
-          chmod +x tools/linux/bossac
+          candidates=(
+            "https://github.com/shumatech/BOSSA/releases/download/${BOSSAC_VERSION}/bossa-${BOSSAC_VERSION}-x86_64-linux.tar.gz"
+            "https://github.com/shumatech/BOSSA/releases/download/${BOSSAC_VERSION}/bossa-${BOSSAC_VERSION}-x86_64-linux.tar.bz2"
+            "https://github.com/shumatech/BOSSA/releases/download/${BOSSAC_VERSION}/bossac-${BOSSAC_VERSION}-x86_64-linux.tar.gz"
+            "https://github.com/shumatech/BOSSA/releases/download/${BOSSAC_VERSION}/bossac-${BOSSAC_VERSION}-x86_64-linux.tar.bz2"
+            "https://github.com/shumatech/BOSSA/releases/download/${BOSSAC_VERSION}/bossac-${BOSSAC_VERSION}-linux64.tar.gz"
+          )
+          fetched=0
+          for url in "${candidates[@]}"; do
+            echo "Attempting bossac fetch from $url"
+            if curl -fL "$url" -o /tmp/bossac-archive; then
+              case "$url" in
+                *.tar.gz) tar -xzf /tmp/bossac-archive -C /tmp || continue ;;
+                *.tar.bz2) tar -xjf /tmp/bossac-archive -C /tmp || continue ;;
+                *) continue ;;
+              esac
+              # try common extracted paths
+              if [ -x /tmp/bossa-${BOSSAC_VERSION}/bossac ]; then
+                cp /tmp/bossa-${BOSSAC_VERSION}/bossac tools/linux/bossac
+              elif [ -x /tmp/bossac-${BOSSAC_VERSION}/bossac ]; then
+                cp /tmp/bossac-${BOSSAC_VERSION}/bossac tools/linux/bossac
+              elif [ -x /tmp/bossac ]; then
+                cp /tmp/bossac tools/linux/bossac
+              else
+                continue
+              fi
+              chmod +x tools/linux/bossac
+              fetched=1
+              break
+            fi
+          done
+          if [ "$fetched" -ne 1 ]; then
+            echo "Failed to fetch bossac ${BOSSAC_VERSION}" >&2
+            exit 1
+          fi
 
       - name: Install cargo-deb
         run: cargo install cargo-deb
