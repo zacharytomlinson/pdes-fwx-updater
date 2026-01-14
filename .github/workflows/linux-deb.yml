@@ -39,12 +39,7 @@ jobs:
 
       - name: Fetch Linux tools (bossac)
         run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y bossa-cli
-          mkdir -p tools/linux
-          cp /usr/bin/bossac tools/linux/bossac
-          chmod +x tools/linux/bossac
+          echo "Skipping bossac fetch; postinst will download if absent."
 
       - name: Install cargo-deb
         run: cargo install cargo-deb
