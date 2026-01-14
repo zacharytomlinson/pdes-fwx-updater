@@ -104,32 +104,16 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           New-Item -ItemType Directory -Force -Path tools/windows | Out-Null
-          $msiUrls = @(
-            "https://github.com/shumatech/BOSSA/releases/download/1.9.1/bossa-x64-1.9.1.msi",
-            "https://github.com/shumatech/BOSSA/releases/download/1.9.1/BOSSA-1.9.1.msi",
-            "https://github.com/shumatech/BOSSA/releases/download/1.9.1/BOSSA.msi"
-          )
-          $msi = "bossa.msi"
-          $downloaded = $false
-          foreach ($url in $msiUrls) {
-            try {
-              Invoke-WebRequest -Uri $url -OutFile $msi -ErrorAction Stop
-              $downloaded = $true
-              break
-            } catch {
-              Write-Host "Failed to fetch $url, trying next..." -ForegroundColor Yellow
-              Remove-Item $msi -ErrorAction SilentlyContinue
-            }
-          }
-          if (-not $downloaded) { throw "Unable to download bossac MSI for Windows" }
-
-          $extractDir = Join-Path (Get-Location) "tools/windows/bossa-extracted"
-          New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
-          msiexec /a $msi /qn TARGETDIR="$extractDir"
-          $bossacExe = Get-ChildItem $extractDir -Recurse -Filter bossac.exe | Select-Object -First 1
-          if ($null -eq $bossacExe) { throw "bossac.exe not found after MSI extraction" }
+          $msysInstaller = "msys2-x86_64-20251213.exe"
+          Invoke-WebRequest -Uri "https://github.com/msys2/msys2-installer/releases/download/2025-12-13/$msysInstaller" -OutFile $msysInstaller
+          Start-Process -Wait -FilePath ".\$msysInstaller" -ArgumentList "/SILENT", "/CURRENTUSER", "/INSTALLDIR=C:\msys64"
+          $env:PATH = "C:\msys64\usr\bin;C:\msys64\mingw64\bin;$env:PATH"
+          bash -lc "pacman -Sy --noconfirm git base-devel mingw-w64-x86_64-toolchain mingw-w64-x86_64-cmake"
+          bash -lc "cd $(( $env:GITHUB_WORKSPACE -replace '\\','/' -replace '^([A-Za-z]):','/$1' )) && git clone --branch 1.9.1 --depth 1 https://github.com/shumatech/BOSSA.git"
+          bash -lc "cd $(( $env:GITHUB_WORKSPACE -replace '\\','/' -replace '^([A-Za-z]):','/$1' ))/BOSSA && mkdir -p build && cd build && cmake -G 'MinGW Makefiles' .. && mingw32-make"
+          $bossacExe = Get-ChildItem BOSSA/build -Recurse -Filter bossac.exe | Select-Object -First 1
+          if ($null -eq $bossacExe) { throw 'bossac.exe not found after build' }
           Copy-Item $bossacExe.FullName -Destination (Join-Path tools/windows "bossac.exe") -Force
-          Remove-Item $msi -ErrorAction SilentlyContinue
           Invoke-WebRequest -Uri "https://github.com/pbatard/libwdi/releases/download/v1.5.3/zadig-$($env:ZADIG_VERSION).exe" -OutFile (Join-Path tools/windows "zadig-$($env:ZADIG_VERSION).exe")
 
       - name: Format check
