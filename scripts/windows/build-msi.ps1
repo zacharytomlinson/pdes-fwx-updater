@@ -32,6 +32,9 @@ heat dir $PayloadDir `
     -sfrag `
     -ag
 
+# Mark all harvested components as 64-bit to satisfy ICE80 when installing to ProgramFiles64Folder
+(Get-Content $PayloadWxs -Raw) -replace '<Component Id="', '<Component Win64="yes" Id="' | Set-Content $PayloadWxs
+
 # Compile + link
 candle -dSourceDir="$PayloadDir" $ProductWxs $PayloadWxs
 light -ext WixUIExtension -ext WixUtilExtension -o $OutputMsi product.wixobj payload.wixobj
