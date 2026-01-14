@@ -105,7 +105,7 @@ jobs:
           $ErrorActionPreference = "Stop"
           New-Item -ItemType Directory -Force -Path tools/windows | Out-Null
           $msiUrls = @(
-            "https://github.com/shumatech/BOSSA/releases/download/1.9.1/bossa-1.9.1.msi",
+            "https://github.com/shumatech/BOSSA/releases/download/1.9.1/bossa-x64-1.9.1.msi",
             "https://github.com/shumatech/BOSSA/releases/download/1.9.1/BOSSA-1.9.1.msi",
             "https://github.com/shumatech/BOSSA/releases/download/1.9.1/BOSSA.msi"
           )
