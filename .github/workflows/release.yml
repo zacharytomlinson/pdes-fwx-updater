@@ -104,12 +104,38 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           New-Item -ItemType Directory -Force -Path tools/windows | Out-Null
-          choco install mingw --version 13.2.0 -y
-          git clone --branch $env:BOSSAC_VERSION --depth 1 https://github.com/shumatech/BOSSA.git
-          cmake -S BOSSA -B bossa-build -G "MinGW Makefiles"
-          cmake --build bossa-build --config Release
-          $bossacExe = Get-ChildItem bossa-build -Recurse -Filter bossac.exe | Select-Object -First 1
-          if ($null -eq $bossacExe) { throw "bossac.exe not found after build" }
+          $candidates = @(
+            @{ url = "https://github.com/shumatech/BOSSA/releases/download/1.9.1/bossa-1.9.1-windows.zip"; type = "zip" },
+            @{ url = "https://github.com/shumatech/BOSSA/releases/download/1.9.1/bossac-1.9.1-windows.zip"; type = "zip" },
+            @{ url = "http://downloads.arduino.cc/tools/bossac-1.9.1-windows.zip"; type = "zip" },
+            @{ url = "http://downloads.arduino.cc/tools/bossac-1.8.0-arduino2-mingw32.tar.gz"; type = "targz" },
+            @{ url = "http://downloads.arduino.cc/tools/bossac-1.3a-arduino-i686-mingw32.tar.bz2"; type = "tarbz2" }
+          )
+          $downloaded = $false
+          foreach ($item in $candidates) {
+            $url = $item.url
+            $type = $item.type
+            $archive = "bossac-archive"
+            try {
+              Invoke-WebRequest -Uri $url -OutFile $archive -ErrorAction Stop
+              if ($type -eq "zip") {
+                Expand-Archive -Path $archive -DestinationPath tools/windows -Force
+              } elseif ($type -eq "targz") {
+                tar -xzf $archive -C tools/windows
+              } elseif ($type -eq "tarbz2") {
+                tar -xjf $archive -C tools/windows
+              }
+              Remove-Item $archive -ErrorAction SilentlyContinue
+              $downloaded = $true
+              break
+            } catch {
+              Write-Host "Failed to fetch $url, trying next..." -ForegroundColor Yellow
+              Remove-Item $archive -ErrorAction SilentlyContinue
+            }
+          }
+          if (-not $downloaded) { throw "Unable to download bossac for Windows from any source" }
+          $bossacExe = Get-ChildItem tools/windows -Recurse -Filter bossac.exe | Select-Object -First 1
+          if ($null -eq $bossacExe) { throw "bossac.exe not found after download/extract" }
           Copy-Item $bossacExe.FullName -Destination (Join-Path tools/windows "bossac.exe") -Force
           Invoke-WebRequest -Uri "https://github.com/pbatard/libwdi/releases/download/v1.5.3/zadig-$($env:ZADIG_VERSION).exe" -OutFile (Join-Path tools/windows "zadig-$($env:ZADIG_VERSION).exe")
 
