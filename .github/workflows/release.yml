@@ -104,10 +104,27 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           New-Item -ItemType Directory -Force -Path tools/windows | Out-Null
-          # Use winget to install BOSSA; it installs bossac.exe into Program Files (x86)\BOSSA
-          winget install --id ShumaTech.BOSSA --silent --accept-package-agreements --accept-source-agreements
-          $bossacExe = Get-ChildItem "C:\Program Files (x86)\BOSSA" -Recurse -Filter bossac.exe | Select-Object -First 1
-          if ($null -eq $bossacExe) { throw "bossac.exe not found after winget install" }
+          $urls = @(
+            "https://github.com/shumatech/BOSSA/releases/download/$($env:BOSSAC_VERSION)/bossa-$($env:BOSSAC_VERSION)-win32.zip",
+            "https://github.com/shumatech/BOSSA/releases/download/$($env:BOSSAC_VERSION)/bossac-$($env:BOSSAC_VERSION)-win32.zip"
+          )
+          $downloaded = $false
+          foreach ($url in $urls) {
+            $zip = "bossa-win.zip"
+            try {
+              Invoke-WebRequest -Uri $url -OutFile $zip -ErrorAction Stop
+              Expand-Archive -Path $zip -DestinationPath tools/windows -Force
+              Remove-Item $zip -ErrorAction SilentlyContinue
+              $downloaded = $true
+              break
+            } catch {
+              Write-Host "Failed to fetch $url, trying next..." -ForegroundColor Yellow
+              Remove-Item $zip -ErrorAction SilentlyContinue
+            }
+          }
+          if (-not $downloaded) { throw "Unable to download bossac zip for Windows" }
+          $bossacExe = Get-ChildItem tools/windows -Recurse -Filter bossac.exe | Select-Object -First 1
+          if ($null -eq $bossacExe) { throw "bossac.exe not found after download" }
           Copy-Item $bossacExe.FullName -Destination (Join-Path tools/windows "bossac.exe") -Force
           Invoke-WebRequest -Uri "https://github.com/pbatard/libwdi/releases/download/v1.5.3/zadig-$($env:ZADIG_VERSION).exe" -OutFile (Join-Path tools/windows "zadig-$($env:ZADIG_VERSION).exe")
 
