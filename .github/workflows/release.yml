@@ -104,25 +104,11 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           New-Item -ItemType Directory -Force -Path tools/windows | Out-Null
-          $urls = @(
-            "https://github.com/shumatech/BOSSA/releases/download/$($env:BOSSAC_VERSION)/bossa-$($env:BOSSAC_VERSION)-win32.zip",
-            "https://github.com/shumatech/BOSSA/releases/download/$($env:BOSSAC_VERSION)/bossac-$($env:BOSSAC_VERSION)-win32.zip"
-          )
-          $downloaded = $false
-          foreach ($url in $urls) {
-            $zip = "bossa-win.zip"
-            try {
-              Invoke-WebRequest -Uri $url -OutFile $zip -ErrorAction Stop
-              Expand-Archive -Path $zip -DestinationPath tools/windows -Force
-              Remove-Item $zip -ErrorAction SilentlyContinue
-              $downloaded = $true
-              break
-            } catch {
-              Write-Host "Failed to fetch $url, trying next..." -ForegroundColor Yellow
-              Remove-Item $zip -ErrorAction SilentlyContinue
-            }
-          }
-          if (-not $downloaded) { throw "Unable to download bossac zip for Windows" }
+          $url = "http://downloads.arduino.cc/tools/bossac-1.3a-arduino-i686-mingw32.tar.bz2"
+          $archive = "bossac-win.tar.bz2"
+          Invoke-WebRequest -Uri $url -OutFile $archive
+          tar -xjf $archive -C tools/windows
+          Remove-Item $archive -ErrorAction SilentlyContinue
           $bossacExe = Get-ChildItem tools/windows -Recurse -Filter bossac.exe | Select-Object -First 1
           if ($null -eq $bossacExe) { throw "bossac.exe not found after download" }
           Copy-Item $bossacExe.FullName -Destination (Join-Path tools/windows "bossac.exe") -Force
