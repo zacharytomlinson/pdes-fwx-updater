@@ -2,5 +2,4 @@
 /.idea
 /Cargo.lock
 /dist
-/tools/windows/*.exe
 /tools/linux/bossac
