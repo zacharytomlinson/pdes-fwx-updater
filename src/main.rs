@@ -5,7 +5,7 @@
 //! Cross-platform egui/eframe desktop UI for flashing PDES firmware, handling
 //! probe and USB vectors plus installer bootstrap per platform.
 #![feature(trim_prefix_suffix)]
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
+#![windows_subsystem = "windows"] // hide console window on Windows in release
 
 mod flasher;
 
@@ -76,6 +76,7 @@ struct FWUpdater {
     status: AppStatus,
     pending_result: Option<FlashOutcome>,
     last_output: Instant,
+    installer_started: bool,
 }
 
 impl Default for FWUpdater {
@@ -97,6 +98,7 @@ impl Default for FWUpdater {
             pending_result: None,
             last_output: Instant::now(),
             status: AppStatus::Idle,
+            installer_started: false,
             console: ConsoleBuilder::new()
                 .prompt("PDES Flasher starting...")
                 .history_size(1000)
@@ -132,10 +134,13 @@ impl FWUpdater {
         ctx: egui::Context,
     ) {
         let prog = *self.load_progress.clone().lock().unwrap();
-        tokio::spawn(async move {
-            if prog < 1.0 {
+        if prog < 1.0 {
+            if !self.installer_started {
+                self.installer_started = true;
+
+                // Run the platform installer once; gating prevents recursive PowerShell spawns on Windows.
                 #[cfg(target_os = "windows")]
-                {
+                tokio::spawn(async {
                     Command::new("powershell")
                         .args([
                             "-NoProfile",
@@ -149,10 +154,10 @@ impl FWUpdater {
                         ])
                         .spawn()
                         .expect("failed to run elevated installer");
-                }
+                });
 
                 #[cfg(target_os = "linux")]
-                {
+                tokio::spawn(async {
                     Command::new("chmod")
                         .arg("+x")
                         .arg(LINUX_INSTALLER)
@@ -164,16 +169,20 @@ impl FWUpdater {
                         .arg(LINUX_INSTALLER)
                         .spawn()
                         .expect("failed to run linux installer");
-                }
-
-                let _ = lp_tx.send(prog + 0.05);
-                ctx.request_repaint();
-            } else {
-                let _ = lp_tx.send(0.0);
-                let _ = stat_tx.send(ViewState::Main); // Transition to main app
-                ctx.request_repaint();
+                });
             }
-        });
+
+            let new_prog = (prog + 0.05).min(1.0);
+            let _ = lp_tx.send(new_prog);
+            if new_prog >= 1.0 {
+                let _ = stat_tx.send(ViewState::Main);
+            }
+            ctx.request_repaint();
+        } else {
+            let _ = lp_tx.send(0.0);
+            let _ = stat_tx.send(ViewState::Main); // Transition to main app
+            ctx.request_repaint();
+        }
     }
 
     /// Start flashing operation, dispatching to probe or USB depending on flash vector.
