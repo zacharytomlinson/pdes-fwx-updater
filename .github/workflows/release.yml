@@ -104,39 +104,32 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           New-Item -ItemType Directory -Force -Path tools/windows | Out-Null
-          $candidates = @(
-            @{ url = "https://github.com/shumatech/BOSSA/releases/download/1.9.1/bossa-1.9.1-windows.zip"; type = "zip" },
-            @{ url = "https://github.com/shumatech/BOSSA/releases/download/1.9.1/bossac-1.9.1-windows.zip"; type = "zip" },
-            @{ url = "http://downloads.arduino.cc/tools/bossac-1.9.1-windows.zip"; type = "zip" },
-            @{ url = "http://downloads.arduino.cc/tools/bossac-1.8.0-arduino2-mingw32.tar.gz"; type = "targz" },
-            @{ url = "http://downloads.arduino.cc/tools/bossac-1.3a-arduino-i686-mingw32.tar.bz2"; type = "tarbz2" }
+          $msiUrls = @(
+            "https://github.com/shumatech/BOSSA/releases/download/1.9.1/bossa-1.9.1.msi",
+            "https://github.com/shumatech/BOSSA/releases/download/1.9.1/BOSSA-1.9.1.msi",
+            "https://github.com/shumatech/BOSSA/releases/download/1.9.1/BOSSA.msi"
           )
+          $msi = "bossa.msi"
           $downloaded = $false
-          foreach ($item in $candidates) {
-            $url = $item.url
-            $type = $item.type
-            $archive = "bossac-archive"
+          foreach ($url in $msiUrls) {
             try {
-              Invoke-WebRequest -Uri $url -OutFile $archive -ErrorAction Stop
-              if ($type -eq "zip") {
-                Expand-Archive -Path $archive -DestinationPath tools/windows -Force
-              } elseif ($type -eq "targz") {
-                tar -xzf $archive -C tools/windows
-              } elseif ($type -eq "tarbz2") {
-                tar -xjf $archive -C tools/windows
-              }
-              Remove-Item $archive -ErrorAction SilentlyContinue
+              Invoke-WebRequest -Uri $url -OutFile $msi -ErrorAction Stop
               $downloaded = $true
               break
             } catch {
               Write-Host "Failed to fetch $url, trying next..." -ForegroundColor Yellow
-              Remove-Item $archive -ErrorAction SilentlyContinue
+              Remove-Item $msi -ErrorAction SilentlyContinue
             }
           }
-          if (-not $downloaded) { throw "Unable to download bossac for Windows from any source" }
-          $bossacExe = Get-ChildItem tools/windows -Recurse -Filter bossac.exe | Select-Object -First 1
-          if ($null -eq $bossacExe) { throw "bossac.exe not found after download/extract" }
+          if (-not $downloaded) { throw "Unable to download bossac MSI for Windows" }
+
+          $extractDir = Join-Path (Get-Location) "tools/windows/bossa-extracted"
+          New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
+          msiexec /a $msi /qn TARGETDIR="$extractDir"
+          $bossacExe = Get-ChildItem $extractDir -Recurse -Filter bossac.exe | Select-Object -First 1
+          if ($null -eq $bossacExe) { throw "bossac.exe not found after MSI extraction" }
           Copy-Item $bossacExe.FullName -Destination (Join-Path tools/windows "bossac.exe") -Force
+          Remove-Item $msi -ErrorAction SilentlyContinue
           Invoke-WebRequest -Uri "https://github.com/pbatard/libwdi/releases/download/v1.5.3/zadig-$($env:ZADIG_VERSION).exe" -OutFile (Join-Path tools/windows "zadig-$($env:ZADIG_VERSION).exe")
 
       - name: Format check
