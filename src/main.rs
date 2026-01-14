@@ -24,11 +24,6 @@ use tokio::process::Command;
 use tokio::runtime::Runtime;
 use tokio::time::sleep;
 
-#[cfg(target_os = "linux")]
-const LINUX_INSTALLER: &str = "./scripts/linux/pdes-linux-installer.sh";
-#[cfg(target_os = "windows")]
-const WIN_INSTALLER: &str = "./scripts/windows/pdes-windows-installer.ps1";
-
 #[derive(Default, Debug, Copy, Clone)]
 pub enum ViewState {
     #[default]
@@ -76,7 +71,6 @@ struct FWUpdater {
     status: AppStatus,
     pending_result: Option<FlashOutcome>,
     last_output: Instant,
-    installer_started: bool,
 }
 
 impl Default for FWUpdater {
@@ -98,7 +92,6 @@ impl Default for FWUpdater {
             pending_result: None,
             last_output: Instant::now(),
             status: AppStatus::Idle,
-            installer_started: false,
             console: ConsoleBuilder::new()
                 .prompt("PDES Flasher starting...")
                 .history_size(1000)
@@ -135,43 +128,6 @@ impl FWUpdater {
     ) {
         let prog = *self.load_progress.clone().lock().unwrap();
         if prog < 1.0 {
-            if !self.installer_started {
-                self.installer_started = true;
-
-                // Run the platform installer once; gating prevents recursive PowerShell spawns on Windows.
-                #[cfg(target_os = "windows")]
-                tokio::spawn(async {
-                    Command::new("powershell")
-                        .args([
-                            "-NoProfile",
-                            "-Command",
-                            &format!(
-                                "Start-Process powershell \
-                 -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File \"{}\"' \
-                 -Verb RunAs",
-                                WIN_INSTALLER
-                            ),
-                        ])
-                        .spawn()
-                        .expect("failed to run elevated installer");
-                });
-
-                #[cfg(target_os = "linux")]
-                tokio::spawn(async {
-                    Command::new("chmod")
-                        .arg("+x")
-                        .arg(LINUX_INSTALLER)
-                        .status()
-                        .await
-                        .expect("chmod failed");
-
-                    Command::new("bash")
-                        .arg(LINUX_INSTALLER)
-                        .spawn()
-                        .expect("failed to run linux installer");
-                });
-            }
-
             let new_prog = (prog + 0.05).min(1.0);
             let _ = lp_tx.send(new_prog);
             if new_prog >= 1.0 {
