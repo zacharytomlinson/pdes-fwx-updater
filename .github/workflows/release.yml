@@ -104,10 +104,27 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           New-Item -ItemType Directory -Force -Path tools/windows | Out-Null
-          $bossaZip = "bossa-$($env:BOSSAC_VERSION)-x64-windows.zip"
-          Invoke-WebRequest -Uri "https://github.com/shumatech/BOSSA/releases/download/$($env:BOSSAC_VERSION)/$bossaZip" -OutFile $bossaZip
-          Expand-Archive -Path $bossaZip -DestinationPath tools/windows -Force
-          Remove-Item $bossaZip
+          $downloads = @(
+            "https://github.com/shumatech/BOSSA/releases/download/$($env:BOSSAC_VERSION)/bossac-$($env:BOSSAC_VERSION)-x64-windows.zip",
+            "https://github.com/shumatech/BOSSA/releases/download/$($env:BOSSAC_VERSION)/bossa-$($env:BOSSAC_VERSION)-x64-windows.zip"
+          )
+          $downloaded = $false
+          foreach ($url in $downloads) {
+            $zip = "bossa.zip"
+            try {
+              Invoke-WebRequest -Uri $url -OutFile $zip -ErrorAction Stop
+              Expand-Archive -Path $zip -DestinationPath tools/windows -Force
+              Remove-Item $zip -ErrorAction SilentlyContinue
+              $downloaded = $true
+              break
+            } catch {
+              Write-Host "Failed to fetch $url, trying next..." -ForegroundColor Yellow
+              Remove-Item $zip -ErrorAction SilentlyContinue
+            }
+          }
+          if (-not $downloaded) {
+            throw "Unable to download bossac zip for Windows"
+          }
           $bossacExe = Get-ChildItem tools/windows -Recurse -Filter bossac.exe | Select-Object -First 1
           if ($null -eq $bossacExe) { throw "bossac.exe not found after download" }
           Copy-Item $bossacExe.FullName -Destination (Join-Path tools/windows "bossac.exe") -Force
