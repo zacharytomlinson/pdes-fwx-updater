@@ -93,7 +93,7 @@ jobs:
 
       - name: Install WiX Toolset 3.11
         run: |
-          if (choco list --local-only wixtoolset | Select-String -Pattern 'wixtoolset'); then
+          if (choco list --local-only wixtoolset | Select-String -Pattern 'wixtoolset') {
             Write-Host "WiX already installed; skipping reinstall."
           } else {
             choco install wixtoolset --version 3.11.2 -y --allow-downgrade
