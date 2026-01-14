@@ -107,7 +107,8 @@ jobs:
           if (-not (Test-Path "tools/windows/bossac.exe")) {
             throw "bossac.exe missing from tools/windows; ensure it is committed to the repo."
           }
-          Invoke-WebRequest -Uri "https://github.com/pbatard/libwdi/releases/download/v1.5.3/zadig-$($env:ZADIG_VERSION).exe" -OutFile (Join-Path tools/windows "zadig-$($env:ZADIG_VERSION).exe")
+          $zadigUrl = "https://github.com/pbatard/libwdi/releases/download/v1.5.3/zadig-$($env:ZADIG_VERSION).exe"
+          & curl.exe -L $zadigUrl -o (Join-Path tools/windows "zadig-$($env:ZADIG_VERSION).exe")
 
       - name: Format check
         run: rustup run $env:RUSTUP_TOOLCHAIN cargo fmt --check
