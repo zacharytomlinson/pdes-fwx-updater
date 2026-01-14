@@ -2,6 +2,15 @@ $ErrorActionPreference = "Stop"
 
 $InstallDir = "C:\Program Files\PDES"
 
+$principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Host "Re-launching uninstaller as Administrator..."
+    Start-Process powershell `
+        -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" `
+        -Verb RunAs
+    exit
+}
+
 Write-Host "Removing PDES..."
 
 # Remove shortcuts

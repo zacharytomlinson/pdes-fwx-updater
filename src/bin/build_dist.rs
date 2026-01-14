@@ -8,8 +8,6 @@ fn main() -> anyhow::Result<()> {
     let dist_dir = "./dist/PDES";
 
     let assets_dir = "./assets";
-    let installer_script = "./scripts/windows/pdes-windows-installer.ps1";
-    let uninstaller_script = "./scripts/windows/pdes-windows-uninstall.ps1";
 
     // Now copy from tools/windows only for Windows distribution
     let tools_windows_dir_source = "./tools/windows";
@@ -25,11 +23,7 @@ fn main() -> anyhow::Result<()> {
     // -----------------------------
     // Copy main Windows executable
     // -----------------------------
-    let exe_dest = format!(
-        "{}/{}",
-        dist_dir,
-        Path::new(exe_source).file_name().unwrap().to_string_lossy()
-    );
+    let exe_dest = format!("{}/pdes.exe", dist_dir);
     fs::copy(exe_source, exe_dest)?;
 
     // -----------------------------
@@ -38,12 +32,6 @@ fn main() -> anyhow::Result<()> {
     let assets_dest = format!("{}/assets", dist_dir);
     fs::create_dir_all(&assets_dest)?;
     copy_dir_recursively(assets_dir, &assets_dest)?;
-
-    // -----------------------------
-    // Copy installer and uninstaller
-    // -----------------------------
-    fs::copy(installer_script, format!("{}/install.ps1", dist_dir))?;
-    fs::copy(uninstaller_script, format!("{}/uninstall.ps1", dist_dir))?;
 
     // -----------------------------
     // Copy Windows tools from tools/windows

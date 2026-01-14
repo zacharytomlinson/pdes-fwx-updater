@@ -7,9 +7,8 @@ $ErrorActionPreference = "Stop"
 # ------------------------------------------------------------
 # Elevation check
 # ------------------------------------------------------------
-if (-not ([Security.Principal.WindowsPrincipal]
-    [Security.Principal.WindowsIdentity]::GetCurrent()
-).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+$principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
 
     Write-Host "Re-launching installer as Administrator..."
     Start-Process powershell `
@@ -150,4 +149,3 @@ Write-Host ""
 Write-Host "$AppName installation completed successfully." -ForegroundColor Green
 Write-Host "BOSSA is installed privately for PDES."
 Write-Host "If your device is not detected, reconnect it and ensure the driver is installed."
-

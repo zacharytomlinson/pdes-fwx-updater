@@ -19,10 +19,35 @@
       <Directory Id="ProgramFiles64Folder">
         <Directory Id="INSTALLDIR" Name="PDES" />
       </Directory>
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ProgramMenuDir" Name="PDES" />
+      </Directory>
+      <Directory Id="DesktopFolder" Name="Desktop" />
     </Directory>
+
+    <!-- Create Start Menu + Desktop shortcuts to the installed app -->
+    <Component Id="PDESShortcuts" Guid="*" Directory="ProgramMenuDir">
+      <!-- Registry value serves as KeyPath to anchor the component -->
+      <RegistryValue Root="HKCU" Key="Software\PDES" Name="Installed" Type="integer" Value="1" KeyPath="yes" />
+      <Shortcut Id="PDESStartMenuShortcut"
+                Name="PDES"
+                Description="PDES Firmware Updater"
+                Target="[INSTALLDIR]pdes.exe"
+                WorkingDirectory="INSTALLDIR"
+                Icon="ProductIcon" />
+      <Shortcut Id="PDESDesktopShortcut"
+                Directory="DesktopFolder"
+                Name="PDES"
+                Description="PDES Firmware Updater"
+                Target="[INSTALLDIR]pdes.exe"
+                WorkingDirectory="INSTALLDIR"
+                Icon="ProductIcon" />
+      <RemoveFolder Id="RemoveProgramMenuDir" Directory="ProgramMenuDir" On="uninstall" />
+    </Component>
 
     <Feature Id="MainFeature" Title="PDES Firmware Updater" Level="1">
       <ComponentGroupRef Id="PDESPayload" />
+      <ComponentRef Id="PDESShortcuts" />
     </Feature>
   </Product>
 </Wix>
