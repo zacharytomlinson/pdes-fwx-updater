@@ -104,13 +104,12 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           New-Item -ItemType Directory -Force -Path tools/windows | Out-Null
-          $url = "http://downloads.arduino.cc/tools/bossac-1.3a-arduino-i686-mingw32.tar.bz2"
-          $archive = "bossac-win.tar.bz2"
-          Invoke-WebRequest -Uri $url -OutFile $archive
-          tar -xjf $archive -C tools/windows
-          Remove-Item $archive -ErrorAction SilentlyContinue
-          $bossacExe = Get-ChildItem tools/windows -Recurse -Filter bossac.exe | Select-Object -First 1
-          if ($null -eq $bossacExe) { throw "bossac.exe not found after download" }
+          choco install mingw --version 13.2.0 -y
+          git clone --branch $env:BOSSAC_VERSION --depth 1 https://github.com/shumatech/BOSSA.git
+          cmake -S BOSSA -B bossa-build -G "MinGW Makefiles"
+          cmake --build bossa-build --config Release
+          $bossacExe = Get-ChildItem bossa-build -Recurse -Filter bossac.exe | Select-Object -First 1
+          if ($null -eq $bossacExe) { throw "bossac.exe not found after build" }
           Copy-Item $bossacExe.FullName -Destination (Join-Path tools/windows "bossac.exe") -Force
           Invoke-WebRequest -Uri "https://github.com/pbatard/libwdi/releases/download/v1.5.3/zadig-$($env:ZADIG_VERSION).exe" -OutFile (Join-Path tools/windows "zadig-$($env:ZADIG_VERSION).exe")
 
