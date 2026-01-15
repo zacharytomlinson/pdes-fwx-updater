@@ -85,7 +85,7 @@ foreach ($component in $payloadXml.SelectNodes("//w:Component", $nsMgr)) {
     if (-not $component.SelectSingleNode("./w:RegistryValue[@KeyPath='yes']", $nsMgr)) {
         $reg = $payloadXml.CreateElement("RegistryValue", $nsUri)
         $reg.SetAttribute("Root", "HKCU")
-        $reg.SetAttribute("Key", "Software\\PDES\\Installer\\Components")
+        $reg.SetAttribute("Key", "Software\PDES\Installer\Components")
         $reg.SetAttribute("Name", $componentId)
         $reg.SetAttribute("Type", "integer")
         $reg.SetAttribute("Value", "1")
@@ -98,10 +98,10 @@ foreach ($component in $payloadXml.SelectNodes("//w:Component", $nsMgr)) {
     }
 }
 
-# Add cleanup components with RemoveFile entries for every DirectoryRef (fixes ICE64)
+# Add cleanup components with RemoveFile entries for every harvested directory (fixes ICE64)
 $cleanupIds = @()
-foreach ($dirRef in $payloadXml.SelectNodes("//w:DirectoryRef", $nsMgr)) {
-    $dirId = $dirRef.GetAttribute("Id")
+foreach ($dir in $payloadXml.SelectNodes("//w:DirectoryRef[@Id='INSTALLDIR']//w:Directory", $nsMgr)) {
+    $dirId = $dir.GetAttribute("Id")
     $cleanupId = "Cleanup_$dirId"
 
     if (-not $payloadXml.SelectSingleNode("//w:Component[@Id='$cleanupId']", $nsMgr)) {
@@ -112,7 +112,7 @@ foreach ($dirRef in $payloadXml.SelectNodes("//w:DirectoryRef", $nsMgr)) {
 
         $reg = $payloadXml.CreateElement("RegistryValue", $nsUri)
         $reg.SetAttribute("Root", "HKCU")
-        $reg.SetAttribute("Key", "Software\\PDES\\Installer\\Cleanup")
+        $reg.SetAttribute("Key", "Software\PDES\Installer\Cleanup")
         $reg.SetAttribute("Name", $cleanupId)
         $reg.SetAttribute("Type", "integer")
         $reg.SetAttribute("Value", "1")
@@ -132,7 +132,7 @@ foreach ($dirRef in $payloadXml.SelectNodes("//w:DirectoryRef", $nsMgr)) {
         $removeFolder.SetAttribute("Directory", $dirId)
         $cleanup.AppendChild($removeFolder) | Out-Null
 
-        $dirRef.AppendChild($cleanup) | Out-Null
+        $dir.AppendChild($cleanup) | Out-Null
         $cleanupIds += $cleanupId
     }
 }
