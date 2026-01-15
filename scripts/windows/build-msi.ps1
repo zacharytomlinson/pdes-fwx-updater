@@ -100,7 +100,16 @@ foreach ($component in $payloadXml.SelectNodes("//w:Component", $nsMgr)) {
 
 # Add cleanup components with RemoveFile entries for every harvested directory (fixes ICE64)
 $cleanupIds = @()
-foreach ($dir in $payloadXml.SelectNodes("//w:DirectoryRef[@Id='INSTALLDIR']//w:Directory", $nsMgr)) {
+# Include INSTALLDIR itself plus all nested directories under it
+$installDirRef = $payloadXml.SelectSingleNode("//w:DirectoryRef[@Id='INSTALLDIR']", $nsMgr)
+if (-not $installDirRef) {
+    throw "DirectoryRef INSTALLDIR not found in harvested payload."
+}
+
+$dirsToClean = @($installDirRef)
+$dirsToClean += $installDirRef.SelectNodes(".//w:Directory", $nsMgr)
+
+foreach ($dir in $dirsToClean) {
     $dirId = $dir.GetAttribute("Id")
     $cleanupId = "Cleanup_$dirId"
 
@@ -132,6 +141,7 @@ foreach ($dir in $payloadXml.SelectNodes("//w:DirectoryRef[@Id='INSTALLDIR']//w:
         $removeFolder.SetAttribute("Directory", $dirId)
         $cleanup.AppendChild($removeFolder) | Out-Null
 
+        # Components can hang directly off DirectoryRef or Directory; use the same parent we're iterating
         $dir.AppendChild($cleanup) | Out-Null
         $cleanupIds += $cleanupId
     }
