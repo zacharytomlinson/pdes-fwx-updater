@@ -36,10 +36,37 @@ heat dir $PayloadDir `
 (Get-Content $PayloadWxs -Raw) -replace '<Component Id="', '<Component Win64="yes" Id="' | Set-Content $PayloadWxs
 
 # Post-process payload to satisfy ICE38/ICE64 for per-user installs (LocalAppDataFolder)
+# Utility: deterministic GUID from name (RFC 4122 version 5)
+function New-StableGuid {
+    param(
+        [Parameter(Mandatory=$true)][Guid]$Namespace,
+        [Parameter(Mandatory=$true)][string]$Name
+    )
+
+    $nsBytes = $Namespace.ToByteArray()
+    $nameBytes = [System.Text.Encoding]::UTF8.GetBytes($Name)
+    $data = New-Object byte[] ($nsBytes.Length + $nameBytes.Length)
+    [Array]::Copy($nsBytes, 0, $data, 0, $nsBytes.Length)
+    [Array]::Copy($nameBytes, 0, $data, $nsBytes.Length, $nameBytes.Length)
+
+    $hash = [System.Security.Cryptography.SHA1]::Create().ComputeHash($data)
+    $guidBytes = New-Object byte[] 16
+    for ($i = 0; $i -lt 16; $i++) {
+        $guidBytes[$i] = $hash[$i]
+    }
+
+    # version 5 + RFC 4122 variant bits
+    $guidBytes[6] = ($guidBytes[6] -band 0x0F) -bor 0x50
+    $guidBytes[8] = ($guidBytes[8] -band 0x3F) -bor 0x80
+
+    return ([Guid]$guidBytes).ToString("D")
+}
+
 [xml]$payloadXml = Get-Content $PayloadWxs
 $nsUri = "http://schemas.microsoft.com/wix/2006/wi"
 $nsMgr = New-Object System.Xml.XmlNamespaceManager($payloadXml.NameTable)
 $nsMgr.AddNamespace("w", $nsUri)
+$namespaceGuid = [Guid]"3e06b236-01e3-4dce-b7ea-4c4d249f698a"
 
 $componentGroup = $payloadXml.SelectSingleNode("//w:ComponentGroup[@Id='PDESPayload']", $nsMgr)
 if (-not $componentGroup) {
@@ -49,6 +76,7 @@ if (-not $componentGroup) {
 # Ensure every component uses an HKCU registry value as its KeyPath (fixes ICE38)
 foreach ($component in $payloadXml.SelectNodes("//w:Component", $nsMgr)) {
     $componentId = $component.GetAttribute("Id")
+    $component.SetAttribute("Guid", (New-StableGuid -Namespace $namespaceGuid -Name $componentId))
 
     foreach ($file in $component.SelectNodes("./w:File[@KeyPath='yes']", $nsMgr)) {
         $file.RemoveAttribute("KeyPath")
@@ -79,7 +107,7 @@ foreach ($dirRef in $payloadXml.SelectNodes("//w:DirectoryRef", $nsMgr)) {
     if (-not $payloadXml.SelectSingleNode("//w:Component[@Id='$cleanupId']", $nsMgr)) {
         $cleanup = $payloadXml.CreateElement("Component", $nsUri)
         $cleanup.SetAttribute("Id", $cleanupId)
-        $cleanup.SetAttribute("Guid", "*")
+        $cleanup.SetAttribute("Guid", (New-StableGuid -Namespace $namespaceGuid -Name $cleanupId))
         $cleanup.SetAttribute("Win64", "yes")
 
         $reg = $payloadXml.CreateElement("RegistryValue", $nsUri)
