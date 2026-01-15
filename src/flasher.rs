@@ -12,14 +12,14 @@ use serialport::{SerialPortType, UsbPortInfo};
 use std::collections::HashMap;
 use std::env;
 use std::fs;
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+#[cfg(target_os = "windows")]
+use tokio::process::CommandExt;
 
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum ChipModel {
