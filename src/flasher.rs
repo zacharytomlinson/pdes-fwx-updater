@@ -18,8 +18,6 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-#[cfg(target_os = "windows")]
-use tokio::process::CommandExt;
 
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum ChipModel {
