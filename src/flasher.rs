@@ -12,6 +12,8 @@ use serialport::{SerialPortType, UsbPortInfo};
 use std::collections::HashMap;
 use std::env;
 use std::fs;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::thread::sleep;
@@ -170,21 +172,29 @@ impl Flasher {
         #[cfg(target_os = "windows")]
         let dev_path: String = format!("--port={}", self.selected_port);
 
-        let mut child = Command::new(bossac_path)
-            .args([
-                dev_path.as_str(),
-                "-i",
-                "-d",
-                "-e",
-                "-w",
-                "-v",
-                "--offset=0x2000",
-                bin_path.as_str(),
-                "-R",
-            ])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
+        let mut cmd = Command::new(bossac_path);
+        cmd.args([
+            dev_path.as_str(),
+            "-i",
+            "-d",
+            "-e",
+            "-w",
+            "-v",
+            "--offset=0x2000",
+            bin_path.as_str(),
+            "-R",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+        #[cfg(target_os = "windows")]
+        {
+            // CREATE_NO_WINDOW to prevent flashing a console window during bossac execution.
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+
+        let mut child = cmd.spawn()?;
 
         let stdout = child.stdout.take().ok_or_else(|| anyhow!("No stdout"))?;
         let stderr = child.stderr.take().ok_or_else(|| anyhow!("No stderr"))?;
