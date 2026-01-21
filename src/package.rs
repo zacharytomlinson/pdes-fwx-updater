@@ -43,48 +43,50 @@ pub fn extract_pkg_and_find_installer(pkg_path: &Path) -> anyhow::Result<Install
 }
 
 pub fn launch_installer(installer_path: &Path) -> anyhow::Result<()> {
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
+    launch_installer_impl(installer_path)
+}
 
-        let mut cmd = Command::new("msiexec.exe");
-        cmd.args(["/i", &installer_path.display().to_string()])
-            .creation_flags(CREATE_NO_WINDOW)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        cmd.spawn().context("Unable to launch MSI installer")?;
+#[cfg(target_os = "windows")]
+fn launch_installer_impl(installer_path: &Path) -> anyhow::Result<()> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    let mut cmd = Command::new("msiexec.exe");
+    cmd.args(["/i", &installer_path.display().to_string()])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    cmd.spawn().context("Unable to launch MSI installer")?;
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn launch_installer_impl(installer_path: &Path) -> anyhow::Result<()> {
+    // Prefer opening with a GUI handler (software center), falling back to pkexec+dpkg.
+    if spawn_if_available("xdg-open", &[installer_path.to_string_lossy().as_ref()]).is_ok() {
         return Ok(());
     }
-
-    #[cfg(target_os = "linux")]
+    if spawn_if_available(
+        "pkexec",
+        &["dpkg", "-i", installer_path.to_string_lossy().as_ref()],
+    )
+    .is_ok()
     {
-        // Prefer opening with a GUI handler (software center), falling back to pkexec+dpkg.
-        if spawn_if_available("xdg-open", &[installer_path.to_string_lossy().as_ref()]).is_ok() {
-            return Ok(());
-        }
-        if spawn_if_available(
-            "pkexec",
-            &["dpkg", "-i", installer_path.to_string_lossy().as_ref()],
-        )
-        .is_ok()
-        {
-            return Ok(());
-        }
-        anyhow::bail!(
-            "Unable to launch installer automatically. Please install: {}",
-            installer_path.display()
-        );
+        return Ok(());
     }
+    anyhow::bail!(
+        "Unable to launch installer automatically. Please install: {}",
+        installer_path.display()
+    );
+}
 
-    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-    {
-        anyhow::bail!(
-            "Automatic installer launch is not implemented for this OS. Installer is at: {}",
-            installer_path.display()
-        );
-    }
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
+fn launch_installer_impl(installer_path: &Path) -> anyhow::Result<()> {
+    anyhow::bail!(
+        "Automatic installer launch is not implemented for this OS. Installer is at: {}",
+        installer_path.display()
+    );
 }
 
 fn extract_archive(pkg_path: &Path, dest: &Path) -> anyhow::Result<()> {
@@ -183,6 +185,7 @@ fn run_cmd(program: &str, args: &[&str]) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn spawn_if_available(program: &str, args: &[&str]) -> anyhow::Result<()> {
     let mut cmd = Command::new(program);
     cmd.args(args)
