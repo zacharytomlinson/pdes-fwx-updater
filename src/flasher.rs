@@ -35,6 +35,7 @@ pub enum FlashVector {
 pub struct Flasher {
     pub(crate) chip: ChipModel,
     pub(crate) probes: Vec<DebugProbeInfo>,
+    pub(crate) selected_probe_index: usize,
     pub(crate) ports: HashMap<String, UsbPortInfo>,
     pub(crate) selected_port: String,
     pub(crate) flash_vector: FlashVector,
@@ -45,30 +46,13 @@ impl Default for Flasher {
         let mut me: Flasher = Flasher {
             chip: ChipModel::ATSAMD21G18A,
             probes: Vec::new(),
+            selected_probe_index: 0,
             ports: HashMap::new(),
             selected_port: String::new(),
-            flash_vector: FlashVector::Probe,
+            flash_vector: FlashVector::Usb,
         };
-        me.ports = Self::populate_ports();
-        if me.selected_port.is_empty()
-            && let Some((key, _value)) = me.ports.iter().next()
-        {
-            me.selected_port = key.to_string();
-        }
-
-        let lister: Lister = Lister::new();
-        let probe_list: Vec<DebugProbeInfo> = lister.list_all();
-        if probe_list.is_empty() {
-            me.flash_vector = FlashVector::Usb;
-            me
-        } else {
-            for probe_info in probe_list.clone() {
-                println!("{:?}", probe_info.identifier);
-                me.probes.push(probe_info);
-            }
-            me.flash_vector = FlashVector::Probe;
-            me
-        }
+        me.refresh_devices();
+        me
     }
 }
 
@@ -76,19 +60,50 @@ impl Flasher {
     /// Discover available USB serial ports and map them by port name.
     fn populate_ports() -> HashMap<String, UsbPortInfo> {
         let mut nu = HashMap::<String, UsbPortInfo>::new();
-        let ports = serialport::available_ports().expect("No ports found!");
-        for p in ports {
-            if let SerialPortType::UsbPort(info) = p.port_type {
-                nu.insert(p.port_name.clone(), info);
+        match serialport::available_ports() {
+            Ok(ports) => {
+                for port in ports {
+                    if let SerialPortType::UsbPort(info) = port.port_type {
+                        nu.insert(port.port_name.clone(), info);
+                    }
+                }
+            }
+            Err(e) => {
+                println!("Unable to enumerate serial ports: {e}");
             }
         }
         nu
     }
 
+    pub fn refresh_devices(&mut self) {
+        self.ports = Self::populate_ports();
+        if self.selected_port.is_empty() || !self.ports.contains_key(&self.selected_port) {
+            self.selected_port = self.ports.keys().next().cloned().unwrap_or_default();
+        }
+
+        let lister: Lister = Lister::new();
+        self.probes = lister.list_all();
+        if self.selected_probe_index >= self.probes.len() {
+            self.selected_probe_index = 0;
+        }
+
+        let has_ports = !self.ports.is_empty();
+        let has_probes = !self.probes.is_empty();
+        match self.flash_vector {
+            FlashVector::Usb if !has_ports && has_probes => self.flash_vector = FlashVector::Probe,
+            FlashVector::Probe if !has_probes && has_ports => self.flash_vector = FlashVector::Usb,
+            FlashVector::Probe if !has_probes && !has_ports => self.flash_vector = FlashVector::Usb,
+            _ => {}
+        }
+    }
+
     /// Open the first detected debug probe when flashing via probe.
     pub fn connect_probe(&self) -> Result<Probe, DebugProbeError> {
         if self.flash_vector == FlashVector::Probe {
-            self.probes[0].open()
+            self.probes
+                .get(self.selected_probe_index)
+                .ok_or(DebugProbeError::TargetNotFound)?
+                .open()
         } else {
             Err(DebugProbeError::TargetNotFound)
         }
@@ -227,7 +242,7 @@ impl Flasher {
     }
 
     /// Locate bundled bossac before falling back to PATH (dev installs may still rely on PATH).
-    fn bossac_path() -> PathBuf {
+    pub fn bossac_path() -> PathBuf {
         let bossac_name = if cfg!(windows) {
             "bossac.exe"
         } else {

@@ -15,6 +15,11 @@
     <Icon Id="ProductIcon" SourceFile="$(var.SourceDir)\assets\windows\icons\icon.ico" />
     <Property Id="ARPPRODUCTICON" Value="ProductIcon" />
 
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Launch PDES" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <Property Id="WixShellExecTarget" Value="[INSTALLDIR]pdes.exe" />
+    <CustomAction Id="LaunchPDES" BinaryKey="WixCA" DllEntry="WixShellExec" Impersonate="yes" />
+
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="LocalAppDataFolder">
         <Directory Id="INSTALLDIR" Name="PDES" />
@@ -49,5 +54,13 @@
       <ComponentGroupRef Id="PDESPayload" />
       <ComponentRef Id="PDESShortcuts" />
     </Feature>
+
+    <UI>
+      <UIRef Id="WixUI_Minimal" />
+      <UIRef Id="WixUI_ErrorProgressText" />
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchPDES">
+        WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed
+      </Publish>
+    </UI>
   </Product>
 </Wix>

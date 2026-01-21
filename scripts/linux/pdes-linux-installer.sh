@@ -1,50 +1,25 @@
 #!/usr/bin/env bash
 
-set -e
+set -euo pipefail
 
-BOSSAC_VERSION="1.9.1"
-BOSSAC_URL="https://github.com/shumatech/BOSSA/releases/download/${BOSSAC_VERSION}/bossac-${BOSSAC_VERSION}-x86_64-linux.tar.gz"
-INSTALL_DIR="/usr/local/bossac-${BOSSAC_VERSION}"
-BIN_LINK="/usr/local/bin/bossac"
-UDEV_RULES_FILE="/etc/udev/rules.d/99-arduino.rules"
+INSTALL_ROOT="/opt/pdes-win-fw-updater"
+BOSSAC_PATH="${INSTALL_ROOT}/tools/bossac"
+UDEV_RULES_FILE="/etc/udev/rules.d/99-pdes.rules"
 
-echo "Installing bossac ${BOSSAC_VERSION} with Arduino udev rules..."
+echo "Configuring PDES Linux dependencies (udev rules)..."
+echo "Note: bossac is expected to be bundled with PDES at ${BOSSAC_PATH}; no system-wide bossac install is performed."
 
 # Must be root
 if [[ $EUID -ne 0 ]]; then
-  echo "Please run as root (use sudo)"
+  echo "Please run as root (use sudo)" >&2
   exit 1
 fi
 
-# -------------------------
-# Install bossac
-# -------------------------
-TMP_DIR=$(mktemp -d)
-cd "$TMP_DIR"
-
-echo "Downloading bossac..."
-curl -L -o bossac.tar.gz "$BOSSAC_URL"
-
-echo "Extracting..."
-tar -xzf bossac.tar.gz
-
-echo "Installing to ${INSTALL_DIR}..."
-mkdir -p "$INSTALL_DIR"
-cp bossac "$INSTALL_DIR/"
-chmod +x "$INSTALL_DIR/bossac"
-
-echo "Creating symlink ${BIN_LINK}..."
-ln -sf "$INSTALL_DIR/bossac" "$BIN_LINK"
-
-cd /
-rm -rf "$TMP_DIR"
-
-# -------------------------
-# Install udev rules
-# -------------------------
-echo "Installing Arduino udev rules..."
-
-cat > "$UDEV_RULES_FILE" << 'EOF'
+if [[ -f /lib/udev/rules.d/99-pdes.rules ]]; then
+  echo "PDES udev rules already installed at /lib/udev/rules.d/99-pdes.rules"
+else
+  echo "Installing PDES udev rules to ${UDEV_RULES_FILE}..."
+  cat > "$UDEV_RULES_FILE" << 'EOF'
 # Arduino / Atmel SAM / SAMD boards (bossac)
 SUBSYSTEM=="tty", ATTRS{idVendor}=="2341", MODE="0666", GROUP="dialout"
 SUBSYSTEM=="tty", ATTRS{idVendor}=="239a", MODE="0666", GROUP="dialout"
@@ -61,46 +36,26 @@ SUBSYSTEM=="usb", ATTRS{idVendor}=="239a", MODE="0666", GROUP="dialout"
 SUBSYSTEM=="usb", ATTRS{idVendor}=="2a03", MODE="0666", GROUP="dialout"
 SUBSYSTEM=="usb", ATTRS{idVendor}=="03eb", MODE="0666", GROUP="dialout"
 EOF
+fi
 
 # -------------------------
 # Reload udev
 # -------------------------
 echo "Reloading udev rules..."
-udevadm control --reload-rules
-udevadm trigger
-
-# -------------------------
-# Ensure user is in dialout group
-# -------------------------
-TARGET_USER=${SUDO_USER:-$(logname)}
-
-if ! id -nG "$TARGET_USER" | grep -qw dialout; then
-  echo "Adding user '$TARGET_USER' to dialout group..."
-  usermod -aG dialout "$TARGET_USER"
-  echo "⚠️  Please log out and log back in for group changes to take effect."
+if command -v udevadm >/dev/null 2>&1; then
+  udevadm control --reload-rules || true
+  udevadm trigger || true
 fi
 
 # -------------------------
 # Verify
 # -------------------------
-echo "Verifying bossac installation..."
-bossac --version
+if [[ -x "$BOSSAC_PATH" ]]; then
+  echo "Found bundled bossac at $BOSSAC_PATH"
+  "$BOSSAC_PATH" --version || true
+else
+  echo "NOTE: bundled bossac not found at $BOSSAC_PATH" >&2
+  echo "Install the PDES .deb to get bossac bundled, or place bossac at that path." >&2
+fi
 
-echo
-echo "✅ bossac ${BOSSAC_VERSION} installed successfully"
-echo "✅ udev rules installed: $UDEV_RULES_FILE"
-echo "ℹ️  You may need to unplug and replug your Arduino"
-
-cat "[Desktop Entry]
-Version=1.0
-Type=Application
-Name=PDES
-Comment=PDES Application
-Exec=/opt/pdes/pdes
-Icon=/opt/pdes/pdes.png
-Terminal=false
-Categories=Utility;" > ~/.local/share/applications/pdes.desktop
-
-chmod +x ~/.local/share/applications/pdes.desktop
-cp ~/.local/share/applications/pdes.desktop ~/Desktop/
-chmod +x ~/Desktop/pdes.desktop
+echo "Done."
