@@ -34,19 +34,19 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libudev-dev pkg-config fakeroot curl
+          sudo apt-get install -y libudev-dev pkg-config fakeroot
 
       - name: Install cargo-deb
         run: cargo install cargo-deb
 
-      - name: Fetch Linux tools (bossac)
+      - name: Verify bundled Linux tools (bossac)
         run: |
           set -euo pipefail
-          mkdir -p tools/linux
-          bossac_url="https://github.com/shumatech/BOSSA/releases/download/${BOSSAC_VERSION}/bossac-${BOSSAC_VERSION}-x86_64-linux.tar.gz"
-          curl -L -o /tmp/bossac.tar.gz "$bossac_url"
-          tar -xzf /tmp/bossac.tar.gz -C /tmp
-          install -m755 /tmp/bossac tools/linux/bossac
+          if [ ! -x tools/linux/bossac ]; then
+            echo "ERROR: tools/linux/bossac is missing or not executable." >&2
+            echo "Add the prebuilt bossac binary under tools/linux/bossac (commit it) so the .deb can be built offline." >&2
+            exit 1
+          fi
 
       - name: Format check
         run: rustup run $RUSTUP_TOOLCHAIN cargo fmt --check
@@ -105,15 +105,16 @@ jobs:
           }
           "${env:ProgramFiles(x86)}\WiX Toolset v3.11\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-      - name: Fetch Windows tools (bossac + zadig)
+      - name: Verify bundled Windows tools (bossac + zadig)
         run: |
           $ErrorActionPreference = "Stop"
           New-Item -ItemType Directory -Force -Path tools/windows | Out-Null
           if (-not (Test-Path "tools/windows/bossac.exe")) {
             throw "bossac.exe missing from tools/windows; ensure it is committed to the repo."
           }
-          $zadigUrl = "https://github.com/pbatard/libwdi/releases/download/v1.5.3/zadig-$($env:ZADIG_VERSION).exe"
-          & curl.exe -L $zadigUrl -o (Join-Path tools/windows "zadig-$($env:ZADIG_VERSION).exe")
+          if (-not (Test-Path ("tools/windows/zadig-{0}.exe" -f $env:ZADIG_VERSION))) {
+            throw ("zadig-{0}.exe missing from tools/windows; ensure it is committed to the repo." -f $env:ZADIG_VERSION)
+          }
 
       - name: Format check
         run: rustup run $env:RUSTUP_TOOLCHAIN cargo fmt --check

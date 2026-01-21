@@ -2,4 +2,3 @@
 /.idea
 /Cargo.lock
 /dist
-/tools/linux/bossac

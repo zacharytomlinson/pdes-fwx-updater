@@ -36,16 +36,16 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libudev-dev pkg-config fakeroot curl
+          sudo apt-get install -y libudev-dev pkg-config fakeroot
 
-      - name: Fetch Linux tools (bossac)
+      - name: Verify bundled Linux tools (bossac)
         run: |
           set -euo pipefail
-          mkdir -p tools/linux
-          bossac_url="https://github.com/shumatech/BOSSA/releases/download/${BOSSAC_VERSION}/bossac-${BOSSAC_VERSION}-x86_64-linux.tar.gz"
-          curl -L -o /tmp/bossac.tar.gz "$bossac_url"
-          tar -xzf /tmp/bossac.tar.gz -C /tmp
-          install -m755 /tmp/bossac tools/linux/bossac
+          if [ ! -x tools/linux/bossac ]; then
+            echo "ERROR: tools/linux/bossac is missing or not executable." >&2
+            echo "Add the prebuilt bossac binary under tools/linux/bossac (commit it) so the .deb can be built offline." >&2
+            exit 1
+          fi
 
       - name: Install cargo-deb
         run: cargo install cargo-deb
