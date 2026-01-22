@@ -195,6 +195,10 @@ fn tighten_perms(path: &Path) -> anyhow::Result<()> {
         fs::set_permissions(path, fs::Permissions::from_mode(0o600))
             .with_context(|| format!("Unable to set 0600 on {}", path.display()))?;
     }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
     Ok(())
 }
 
