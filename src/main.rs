@@ -22,7 +22,7 @@ use crate::settings::AppSettings;
 use crate::updater::UpdateCheckState;
 use eframe::epaint::Color32;
 use eframe::{App, CreationContext, NativeOptions, egui};
-use egui::{Align2, Area, Button, CentralPanel, Id, RichText, Stroke, Vec2};
+use egui::{Align2, Button, CentralPanel, RichText, ScrollArea, Stroke, TopBottomPanel, Vec2};
 use egui_console::{ConsoleBuilder, ConsoleWindow};
 use egui_file_dialog::FileDialog;
 use flasher::Flasher;
@@ -73,6 +73,13 @@ struct PreflightReport {
 enum UiEvent {
     SetFirmwarePath(PathBuf),
 }
+
+const UI_CENTER_COLUMN_MAX_WIDTH: f32 = 900.0;
+const UI_CONTROLS_DEFAULT_HEIGHT: f32 = 420.0;
+const UI_CONTROLS_MIN_HEIGHT: f32 = 220.0;
+const UI_LOGO_MAX_HEIGHT: f32 = 80.0;
+const UI_FLASH_PANEL_HEIGHT: f32 = 54.0;
+const UI_FLASH_BUTTON_SIZE: Vec2 = Vec2::new(140.0, 32.0);
 
 //the main application struct, holding its current screen
 struct FWUpdater {
@@ -523,36 +530,52 @@ impl App for FWUpdater {
             ViewState::Main => {
                 self.ensure_preflight();
                 self.ensure_updater();
-                CentralPanel::default().show(ctx, |ui| {
-                    ui.vertical_centered(|ui| {
-                        Area::new(Id::from("top_center_area"))
-                            .anchor(Align2::CENTER_TOP, [0.0, 15.0])
-                            .default_height(ui.available_height() * 0.15)
-                            .default_width(ui.available_width() * 0.9)
-                            .show(ctx, |ui| {
-                                ui.add(
-                                    egui::Image::new(egui::include_image!(
-                                        "../assets/pdes_tx_logo.png"
-                                    ))
-                                    .max_height(45.0),
+                TopBottomPanel::top("controls_panel")
+                    .resizable(true)
+                    .default_height(UI_CONTROLS_DEFAULT_HEIGHT)
+                    .min_height(UI_CONTROLS_MIN_HEIGHT)
+                    .show(ctx, |ui| {
+                        ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                let avail_rect = ui.available_rect_before_wrap();
+                                let width = avail_rect.width().min(UI_CENTER_COLUMN_MAX_WIDTH);
+                                let column_rect = egui::Rect::from_center_size(
+                                    avail_rect.center(),
+                                    Vec2::new(width, avail_rect.height()),
                                 );
-                                ui.add_space(15.0);
+                                ui.scope_builder(egui::UiBuilder::new().max_rect(column_rect), |ui| {
+                                    ui.set_width(width);
 
-                                egui::CollapsingHeader::new("Pre-flight")
-                                    .default_open(self.preflight_open)
-                                    .show(ui, |ui| {
-                                        ui.horizontal_wrapped(|ui| {
-                                            let (label, color) = if self.preflight.bossac_bundled {
-                                                ("OK", Color32::GREEN)
-                                            } else if self.preflight.bossac_from_path {
-                                                ("PATH", Color32::YELLOW)
-                                            } else {
-                                                ("MISSING", Color32::RED)
-                                            };
-                                            ui.label("BOSSAC:");
-                                            ui.colored_label(color, label);
-                                            ui.monospace(&self.preflight.bossac_path);
-                                        });
+                                    ui.vertical_centered(|ui| {
+                                        ui.add(
+                                            egui::Image::new(egui::include_image!(
+                                                "../assets/pdes_tx_logo.png"
+                                            ))
+                                            .fit_to_original_size(1.0)
+                                            .max_size(Vec2::new(width, UI_LOGO_MAX_HEIGHT)),
+                                        );
+                                    });
+                                    ui.add_space(15.0);
+
+                                                egui::CollapsingHeader::new("Pre-flight")
+                                                    .default_open(self.preflight_open)
+                                                    .show(ui, |ui| {
+                                                        ui.horizontal_wrapped(|ui| {
+                                                            let (label, color) = if self
+                                                                .preflight
+                                                                .bossac_bundled
+                                                            {
+                                                                ("OK", Color32::GREEN)
+                                                            } else if self.preflight.bossac_from_path {
+                                                                ("PATH", Color32::YELLOW)
+                                                            } else {
+                                                                ("MISSING", Color32::RED)
+                                                            };
+                                                            ui.label("BOSSAC:");
+                                                            ui.colored_label(color, label);
+                                                            ui.monospace(&self.preflight.bossac_path);
+                                                        });
 
                                         ui.horizontal_wrapped(|ui| {
                                             ui.label("USB ports:");
@@ -918,68 +941,67 @@ impl App for FWUpdater {
                                     }
                                 }
 
-                                if ui
-                                    .add(
-                                        egui::TextEdit::singleline(&mut self.fd_text)
-                                            .clip_text(false),
-                                    )
-                                    .clicked()
-                                {
-                                    self.fd.lock().unwrap().pick_file();
-                                };
-                            });
-
-                        ui.add_space(15.0);
-
-                        Area::new(Id::from("middle_center_area"))
-                            .anchor(Align2::CENTER_CENTER, [5.0, 50.0])
-                            .default_height(ui.available_height() * 0.70)
-                            .default_width(ui.available_width() * 0.9)
-                            .show(ctx, |ui| {
-                                egui::Frame::NONE
-                                    .fill(egui::Color32::DARK_GRAY)
-                                    .corner_radius(5)
-                                    .stroke(Stroke::new(1.0, egui::Color32::WHITE))
-                                    .show(ui, |ui| {
-                                        self.console.draw(ui);
-                                    });
-                            });
-
-                        if let Some(path) = self.fd.lock().unwrap().take_picked() {
-                            self.elf_path = Arc::new(Mutex::new(Some(path.to_path_buf())));
-                            self.fd_text = path.to_str().unwrap().to_string();
-                        }
-
-                        ui.add_space(10.0);
-                        Area::new(Id::from("bottom_center_area"))
-                            .anchor(Align2::CENTER_BOTTOM, [0.0, -12.5])
-                            .show(ui.ctx(), |ui| {
-                                ui.horizontal_centered(|ui| {
-                                    let button = Button::new(
-                                        RichText::new("FLASH").color(Color32::DARK_BLUE),
-                                    )
-                                    .fill(Color32::GREEN)
-                                    .stroke(Stroke::new(1.0, egui::Color32::DARK_BLUE));
-                                    if ui.add_sized(Vec2::new(100.0, 25.0), button).clicked() {
-                                        let path = self
-                                            .elf_path
-                                            .lock()
-                                            .unwrap()
-                                            .as_ref()
-                                            .map(|p| p.display().to_string());
-                                        let Some(path) = path else {
-                                            self.console.write("Select a firmware file first.");
-                                            return;
-                                        };
-
-                                        self.show_output = !self.show_output;
-                                        let flasher: Flasher = self.flasher.lock().unwrap().clone();
-                                        self.start_flash_op(flasher, path, ctx.clone());
-                                    }
+                                                        if ui
+                                                            .add(
+                                                                egui::TextEdit::singleline(
+                                                                    &mut self.fd_text,
+                                                                )
+                                                                .clip_text(false),
+                                                            )
+                                                                .clicked()
+                                                        {
+                                                            self.fd.lock().unwrap().pick_file();
+                                                        };
                                 });
                             });
                     });
+
+                TopBottomPanel::bottom("flash_panel")
+                    .exact_height(UI_FLASH_PANEL_HEIGHT)
+                    .show(ctx, |ui| {
+                        let avail_rect = ui.available_rect_before_wrap();
+                        let button_size = UI_FLASH_BUTTON_SIZE;
+                        let button_rect =
+                            egui::Rect::from_center_size(avail_rect.center(), button_size);
+                        ui.scope_builder(egui::UiBuilder::new().max_rect(button_rect), |ui| {
+                            let button =
+                                Button::new(RichText::new("FLASH").color(Color32::DARK_BLUE))
+                                    .fill(Color32::GREEN)
+                                    .stroke(Stroke::new(1.0, egui::Color32::DARK_BLUE));
+                            if ui.add_sized(button_size, button).clicked() {
+                                let path = self
+                                    .elf_path
+                                    .lock()
+                                    .unwrap()
+                                    .as_ref()
+                                    .map(|p| p.display().to_string());
+                                let Some(path) = path else {
+                                    self.console.write("Select a firmware file first.");
+                                    return;
+                                };
+
+                                self.show_output = !self.show_output;
+                                let flasher: Flasher = self.flasher.lock().unwrap().clone();
+                                self.start_flash_op(flasher, path, ctx.clone());
+                            }
+                        });
+                    });
+
+                CentralPanel::default().show(ctx, |ui| {
+                    egui::Frame::NONE
+                        .fill(egui::Color32::DARK_GRAY)
+                        .corner_radius(5)
+                        .stroke(Stroke::new(1.0, egui::Color32::WHITE))
+                        .inner_margin(egui::Margin::same(6))
+                        .show(ui, |ui| {
+                            self.console.draw(ui);
+                        });
                 });
+
+                if let Some(path) = self.fd.lock().unwrap().take_picked() {
+                    self.elf_path = Arc::new(Mutex::new(Some(path.to_path_buf())));
+                    self.fd_text = path.to_str().unwrap().to_string();
+                }
             }
         }
 
@@ -1084,7 +1106,12 @@ fn main() -> eframe::Result<()> {
         })
     });
 
-    let options: NativeOptions = NativeOptions::default();
+    let options = NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([1024.0, 820.0])
+            .with_min_inner_size([900.0, 700.0]),
+        ..Default::default()
+    };
     eframe::run_native(
         "Palo Duro Embedded Systems Firmware Updater",
         options,

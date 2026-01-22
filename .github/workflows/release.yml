@@ -126,7 +126,7 @@ jobs:
         run: rustup run $env:RUSTUP_TOOLCHAIN cargo build --release --target $env:CARGO_TARGET
 
       - name: Package distribution folder
-        run: rustup run $env:RUSTUP_TOOLCHAIN cargo run --bin build_dist --release
+        run: rustup run $env:RUSTUP_TOOLCHAIN cargo run --bin build_dist --release --target $env:CARGO_TARGET
 
       - name: Build MSI
         run: ./scripts/windows/build-msi.ps1 -PayloadDir "dist\PDES" -OutputMsi "dist\PDES.msi"
