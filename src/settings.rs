@@ -1,5 +1,4 @@
 use anyhow::Context;
-use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -47,9 +46,7 @@ impl AppSettings {
 }
 
 fn settings_path() -> anyhow::Result<PathBuf> {
-    let dirs = ProjectDirs::from("com", "pdes", "pdes-fw-updater")
-        .context("Unable to resolve per-user settings directory")?;
-    Ok(dirs.config_dir().join("settings.json"))
+    crate::app_dirs::settings_path()
 }
 
 fn write_atomic(dest: &Path, bytes: &[u8]) -> anyhow::Result<()> {

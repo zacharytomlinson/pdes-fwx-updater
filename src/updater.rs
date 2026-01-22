@@ -119,14 +119,18 @@ fn normalize_download_url(url: String) -> Option<String> {
     if url.starts_with("http://") || url.starts_with("https://") {
         return Some(url);
     }
+    let origin = cdn_origin();
     if url.starts_with('/') {
-        return Some(format!("{}{}", cdn_origin(), url));
+        return Some(format!("{origin}{url}"));
     }
-    Some(format!("{}/{}", cdn_origin(), url))
+    Some(format!("{origin}/{url}"))
 }
 
-fn cdn_origin() -> &'static str {
-    "https://cdn.palodurosystems.io"
+fn cdn_origin() -> String {
+    std::env::var("PDES_CDN_ORIGIN")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "https://cdn.palodurosystems.io".to_string())
 }
 
 fn normalize_sha256(sha: String) -> Option<String> {

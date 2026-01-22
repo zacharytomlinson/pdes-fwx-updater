@@ -1,21 +1,60 @@
 use anyhow::Context;
-use directories::UserDirs;
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub fn download_to_user_downloads_verified(
+pub fn download_app_pkg_to_staging_verified(
     url: &str,
     token: &str,
     expected_sha256: &str,
 ) -> anyhow::Result<PathBuf> {
-    let downloads_dir = user_downloads_dir()?;
-    fs::create_dir_all(&downloads_dir).with_context(|| {
+    let dest = crate::app_dirs::updates_staging_dir()?.join("app.pkg");
+    download_to_path_verified(&dest, url, token, expected_sha256)?;
+    Ok(dest)
+}
+
+pub fn download_to_app_firmware_verified(
+    url: &str,
+    token: &str,
+    expected_sha256: &str,
+) -> anyhow::Result<PathBuf> {
+    let firmware_dir = crate::app_dirs::firmware_dir()?;
+    download_to_dir_verified(&firmware_dir, url, token, expected_sha256)
+}
+
+pub fn download_to_path_verified(
+    dest_path: &Path,
+    url: &str,
+    token: &str,
+    expected_sha256: &str,
+) -> anyhow::Result<()> {
+    let Some(parent) = dest_path.parent() else {
+        anyhow::bail!("Invalid destination path: {}", dest_path.display());
+    };
+    fs::create_dir_all(parent).with_context(|| format!("Unable to create {}", parent.display()))?;
+
+    let response = ureq::get(url)
+        .timeout(Duration::from_secs(30))
+        .set("Authorization", &format!("Bearer {token}"))
+        .call()
+        .context("Download request failed")?;
+
+    download_response_to_path_verified(response, dest_path, expected_sha256)?;
+    Ok(())
+}
+
+pub fn download_to_dir_verified(
+    dest_dir: &Path,
+    url: &str,
+    token: &str,
+    expected_sha256: &str,
+) -> anyhow::Result<PathBuf> {
+    fs::create_dir_all(dest_dir).with_context(|| {
         format!(
-            "Unable to create downloads directory: {}",
-            downloads_dir.display()
+            "Unable to create destination directory: {}",
+            dest_dir.display()
         )
     })?;
 
@@ -34,11 +73,29 @@ pub fn download_to_user_downloads_verified(
             .to_string()
     });
 
-    let dest_path = unique_dest_path(&downloads_dir.join(filename));
+    let dest_path = unique_dest_path(&dest_dir.join(filename));
+    download_response_to_path_verified(response, &dest_path, expected_sha256)?;
+    Ok(dest_path)
+}
+
+fn download_response_to_path_verified(
+    response: ureq::Response,
+    dest_path: &Path,
+    expected_sha256: &str,
+) -> anyhow::Result<()> {
+    let Some(parent) = dest_path.parent() else {
+        anyhow::bail!("Invalid destination path: {}", dest_path.display());
+    };
+
+    let filename = dest_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("download.bin");
+    let tmp_path = parent.join(format!("{filename}.tmp"));
 
     let mut reader = response.into_reader();
-    let mut file = File::create(&dest_path)
-        .with_context(|| format!("Unable to create {}", dest_path.display()))?;
+    let mut file = File::create(&tmp_path)
+        .with_context(|| format!("Unable to create {}", tmp_path.display()))?;
 
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 64 * 1024];
@@ -55,22 +112,16 @@ pub fn download_to_user_downloads_verified(
     let got = format!("{:x}", hasher.finalize());
     let expected = expected_sha256.trim().to_ascii_lowercase();
     if got != expected {
-        anyhow::bail!(
-            "SHA256 mismatch: expected {expected}, got {got} (file saved at {})",
-            dest_path.display()
-        );
+        let _ = fs::remove_file(&tmp_path);
+        anyhow::bail!("SHA256 mismatch: expected {expected}, got {got}");
     }
 
-    Ok(dest_path)
-}
+    // Atomic swap where possible; Windows rename() won't overwrite.
+    let _ = fs::remove_file(dest_path);
+    fs::rename(&tmp_path, dest_path)
+        .with_context(|| format!("Unable to move into place: {}", dest_path.display()))?;
 
-pub fn user_downloads_dir() -> anyhow::Result<PathBuf> {
-    let dirs = UserDirs::new().context("Unable to determine user directories")?;
-    if let Some(dir) = dirs.download_dir() {
-        return Ok(dir.to_path_buf());
-    }
-    let home = dirs.home_dir().to_path_buf().join("Downloads");
-    Ok(home)
+    Ok(())
 }
 
 fn filename_from_response(resp: &ureq::Response) -> Option<String> {

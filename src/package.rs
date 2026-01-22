@@ -6,16 +6,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use tempfile::Builder;
 
-use crate::downloader::user_downloads_dir;
-
 #[derive(Debug, Clone)]
 pub struct InstallerPlan {
     pub installer_path: PathBuf,
 }
 
 pub fn extract_pkg_and_find_installer(pkg_path: &Path) -> anyhow::Result<InstallerPlan> {
-    let downloads = user_downloads_dir()?;
-    let base = downloads.join("PDES").join("updates");
+    let base = crate::app_dirs::updates_staging_dir()?;
     fs::create_dir_all(&base).with_context(|| format!("Unable to create {}", base.display()))?;
 
     let extract_root = Builder::new()
@@ -29,6 +26,7 @@ pub fn extract_pkg_and_find_installer(pkg_path: &Path) -> anyhow::Result<Install
 
     let manifest_path = payload_root.join("manifest.json");
     let manifest = PackageManifest::load(&manifest_path)?;
+    persist_package_metadata(&payload_root, &manifest_path, &manifest)?;
 
     let installer_rel = PathBuf::from(&manifest.installer.path);
     let installer_path = payload_root.join(&installer_rel);
@@ -40,6 +38,50 @@ pub fn extract_pkg_and_find_installer(pkg_path: &Path) -> anyhow::Result<Install
     }
 
     Ok(InstallerPlan { installer_path })
+}
+
+fn persist_package_metadata(
+    payload_root: &Path,
+    manifest_path: &Path,
+    manifest: &PackageManifest,
+) -> anyhow::Result<()> {
+    let updates_dir = crate::app_dirs::updates_dir()?;
+    fs::create_dir_all(&updates_dir)
+        .with_context(|| format!("Unable to create {}", updates_dir.display()))?;
+
+    let dest_manifest = crate::app_dirs::updates_manifest_path()?;
+    copy_atomic(manifest_path, &dest_manifest)?;
+
+    if !manifest.icon.path.is_empty() {
+        let src_icon = payload_root.join(&manifest.icon.path);
+        if src_icon.exists() {
+            let ext = src_icon
+                .extension()
+                .and_then(|s| s.to_str())
+                .filter(|s| !s.is_empty());
+            let dest_icon = if let Some(ext) = ext {
+                updates_dir.join(format!("icon.{ext}"))
+            } else {
+                updates_dir.join("icon")
+            };
+            let _ = copy_atomic(&src_icon, &dest_icon);
+        }
+    }
+
+    Ok(())
+}
+
+fn copy_atomic(src: &Path, dest: &Path) -> anyhow::Result<()> {
+    let Some(parent) = dest.parent() else {
+        anyhow::bail!("Invalid destination path: {}", dest.display());
+    };
+    fs::create_dir_all(parent).with_context(|| format!("Unable to create {}", parent.display()))?;
+    let bytes = fs::read(src).with_context(|| format!("Unable to read {}", src.display()))?;
+    let tmp = parent.join("tmp.copy");
+    fs::write(&tmp, bytes).with_context(|| format!("Unable to write {}", tmp.display()))?;
+    fs::rename(&tmp, dest)
+        .with_context(|| format!("Unable to move {} into place", dest.display()))?;
+    Ok(())
 }
 
 pub fn launch_installer(installer_path: &Path) -> anyhow::Result<()> {
@@ -232,10 +274,18 @@ fn find_payload_root(extract_root: &Path) -> anyhow::Result<PathBuf> {
 struct PackageManifest {
     #[serde(default)]
     installer: InstallerSection,
+    #[serde(default)]
+    icon: IconSection,
 }
 
 #[derive(Debug, Default, Deserialize)]
 struct InstallerSection {
+    #[serde(default)]
+    path: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct IconSection {
     #[serde(default)]
     path: String,
 }

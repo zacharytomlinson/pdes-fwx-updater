@@ -7,14 +7,18 @@
 #![feature(trim_prefix_suffix)]
 #![windows_subsystem = "windows"] // hide console window on Windows in release
 
+mod app_dirs;
+mod bootstrap;
+mod device_token;
 mod downloader;
 mod flasher;
 mod manifest;
 mod package;
+mod seed;
 mod settings;
 mod updater;
 
-use crate::downloader::download_to_user_downloads_verified;
+use crate::downloader::{download_app_pkg_to_staging_verified, download_to_app_firmware_verified};
 use crate::flasher::{ChipModel, FlashVector};
 use crate::manifest::UpdateIdentity;
 use crate::package::{extract_pkg_and_find_installer, launch_installer};
@@ -31,7 +35,7 @@ use serialport::{SerialPortInfo, SerialPortType};
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
 use tokio::time::sleep;
 
@@ -72,6 +76,8 @@ struct PreflightReport {
 #[derive(Debug, Clone)]
 enum UiEvent {
     SetFirmwarePath(PathBuf),
+    BootstrapComplete(crate::bootstrap::BootstrapExchangeResult),
+    BootstrapFailed(String),
 }
 
 const UI_CENTER_COLUMN_MAX_WIDTH: f32 = 900.0;
@@ -80,6 +86,18 @@ const UI_CONTROLS_MIN_HEIGHT: f32 = 220.0;
 const UI_LOGO_MAX_HEIGHT: f32 = 80.0;
 const UI_FLASH_PANEL_HEIGHT: f32 = 54.0;
 const UI_FLASH_BUTTON_SIZE: Vec2 = Vec2::new(140.0, 32.0);
+
+fn next_bootstrap_backoff(failures: u32) -> Duration {
+    let exp = failures.min(5);
+    let mut secs = 2u64.saturating_mul(1u64 << exp);
+    secs = secs.min(60);
+    let jitter_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|d| (d.subsec_millis() % 500) as u64)
+        .unwrap_or(0);
+    Duration::from_secs(secs) + Duration::from_millis(jitter_ms)
+}
 
 //the main application struct, holding its current screen
 struct FWUpdater {
@@ -117,6 +135,10 @@ struct FWUpdater {
 
     update_state: UpdateCheckState,
     update_check_started: bool,
+    bootstrap_in_flight: bool,
+    bootstrap_retry_at: Option<Instant>,
+    bootstrap_failures: u32,
+    device_token: Option<String>,
     update_tx: Sender<UpdateCheckState>,
     update_rx: Receiver<UpdateCheckState>,
 
@@ -136,7 +158,7 @@ impl Default for FWUpdater {
         let settings = AppSettings::load_or_default();
         let token_input = settings.update_token.clone().unwrap_or_default();
         let update_identity = UpdateIdentity::load_or_default();
-        Self {
+        let mut app = Self {
             state: Arc::new(Mutex::new(ViewState::Splash)),
             load_progress: Arc::new(Mutex::new(0.0)),
             flasher: Default::default(),
@@ -173,11 +195,48 @@ impl Default for FWUpdater {
             update_identity,
             update_state: UpdateCheckState::NotConfigured,
             update_check_started: false,
+            bootstrap_in_flight: false,
+            bootstrap_retry_at: None,
+            bootstrap_failures: 0,
+            device_token: None,
             update_tx,
             update_rx,
             ui_tx,
             ui_rx,
+        };
+
+        if let Err(e) = crate::app_dirs::ensure_dirs() {
+            let msg = format!("Unable to initialize persistent storage: {e:#}");
+            app.console.write(&msg);
         }
+
+        match crate::seed::ensure_seed_config() {
+            Ok(Some(path)) => {
+                let msg = format!("Seeded updater config at {}", path.display());
+                app.console.write(&msg);
+            }
+            Ok(None) => {}
+            Err(e) => {
+                let msg = format!("Unable to seed updater config: {e:#}");
+                app.console.write(&msg);
+            }
+        }
+
+        if let Ok(Some(tok)) = crate::device_token::load() {
+            app.device_token = Some(tok);
+            app.console.write("Loaded device token.");
+        }
+
+        if app
+            .update_identity
+            .bootstrap_pkg_url
+            .as_deref()
+            .is_some_and(|s| !s.trim().is_empty())
+        {
+            app.console.write("Bootstrap package URL configured.");
+        }
+
+        app
     }
 }
 
@@ -194,13 +253,11 @@ impl FWUpdater {
     }
 
     fn ensure_updater(&mut self) {
-        if self
-            .settings
-            .update_token
-            .as_deref()
-            .unwrap_or_default()
-            .is_empty()
-        {
+        let token = self.effective_update_token();
+        if token.is_none() {
+            if self.maybe_start_bootstrap_exchange() {
+                return;
+            }
             self.update_state = UpdateCheckState::NotConfigured;
             if !self.token_prompt_dismissed {
                 self.token_prompt_open = true;
@@ -214,15 +271,11 @@ impl FWUpdater {
 
         if !self.update_check_started {
             self.update_check_started = true;
-            self.start_update_check();
+            self.start_update_check(token.expect("token checked above"));
         }
     }
 
-    fn start_update_check(&mut self) {
-        let Some(token) = self.settings.update_token.clone() else {
-            return;
-        };
-
+    fn start_update_check(&mut self, token: String) {
         let package_url = self.update_identity.package_latest_url();
         let firmware_url = self.update_identity.firmware_latest_url();
 
@@ -247,6 +300,96 @@ impl FWUpdater {
                 }
             }
         });
+    }
+
+    fn effective_update_token(&mut self) -> Option<String> {
+        if let Some(tok) = self
+            .settings
+            .update_token
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+        {
+            return Some(tok);
+        }
+        if let Some(tok) = self.device_token.clone().filter(|s| !s.trim().is_empty()) {
+            return Some(tok);
+        }
+        if let Ok(Some(tok)) = crate::device_token::load() {
+            self.device_token = Some(tok.clone());
+            return Some(tok);
+        }
+        None
+    }
+
+    fn maybe_start_bootstrap_exchange(&mut self) -> bool {
+        if self.bootstrap_in_flight {
+            return true;
+        }
+        if let Some(at) = self.bootstrap_retry_at
+            && Instant::now() < at
+        {
+            return true;
+        }
+        let Some(pkg_url) = self
+            .update_identity
+            .bootstrap_pkg_url
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+        else {
+            return false;
+        };
+
+        self.bootstrap_in_flight = true;
+        self.update_state = UpdateCheckState::Checking;
+        self.console
+            .write("Exchanging bootstrap token for device token...");
+
+        let ot_tx = self.ot_tx.clone();
+        let ui_tx = self.ui_tx.clone();
+        let update_tx = self.update_tx.clone();
+        std::thread::spawn(move || {
+            let _ = update_tx.send(UpdateCheckState::Checking);
+            match crate::bootstrap::exchange_pkg_url(&pkg_url) {
+                Ok(result) => match crate::device_token::store(&result.device_token) {
+                    Ok(outcome) => {
+                        let _ = ot_tx
+                            .send(format!("Stored device token at {}", outcome.path.display()));
+                        if cfg!(windows) && !outcome.perms_tightened {
+                            let _ = ot_tx.send(
+                                "WARNING: Unable to tighten device token ACLs (relying on LocalAppData defaults)."
+                                    .to_string(),
+                            );
+                        }
+                        match crate::seed::persist_bootstrap_exchange(&pkg_url, &result) {
+                            Ok(cfg_path) => {
+                                let _ = ot_tx.send(format!(
+                                    "Updated updater config at {}",
+                                    cfg_path.display()
+                                ));
+                            }
+                            Err(e) => {
+                                let _ =
+                                    ot_tx.send(format!("Unable to persist updater config: {e}"));
+                            }
+                        }
+                        let _ = ui_tx.send(UiEvent::BootstrapComplete(result));
+                    }
+                    Err(e) => {
+                        let msg = "Unable to store device token.".to_string();
+                        let _ = ot_tx.send(format!("{msg} ({e})"));
+                        let _ = update_tx.send(UpdateCheckState::Error(msg.clone()));
+                        let _ = ui_tx.send(UiEvent::BootstrapFailed(msg));
+                    }
+                },
+                Err(e) => {
+                    let msg = e.to_string();
+                    let _ = ot_tx.send("Bootstrap exchange failed.".to_string());
+                    let _ = update_tx.send(UpdateCheckState::Error(msg.clone()));
+                    let _ = ui_tx.send(UiEvent::BootstrapFailed(msg));
+                }
+            }
+        });
+        true
     }
 
     fn refresh_preflight(&mut self) {
@@ -502,6 +645,40 @@ impl App for FWUpdater {
                     self.fd_text = path.display().to_string();
                     self.console.write("Firmware downloaded and selected.");
                 }
+                UiEvent::BootstrapComplete(result) => {
+                    self.device_token = Some(result.device_token);
+                    if let Some(slug) = result.app_slug {
+                        self.update_identity.slug = slug;
+                    }
+                    if let Some(os) = result.os {
+                        self.update_identity.os = os;
+                    }
+                    if let Some(arch) = result.arch {
+                        self.update_identity.arch = arch;
+                    }
+                    self.update_identity.bootstrap_pkg_url = None;
+                    self.bootstrap_in_flight = false;
+                    self.bootstrap_retry_at = None;
+                    self.bootstrap_failures = 0;
+                    self.update_check_started = false;
+                    self.update_state = UpdateCheckState::Checking;
+                    self.console.write("Device token acquired.");
+                }
+                UiEvent::BootstrapFailed(msg) => {
+                    self.bootstrap_in_flight = false;
+                    self.update_check_started = false;
+
+                    let delay = next_bootstrap_backoff(self.bootstrap_failures);
+                    self.bootstrap_failures = self.bootstrap_failures.saturating_add(1);
+                    self.bootstrap_retry_at = Some(Instant::now() + delay);
+
+                    let retry_msg = format!(
+                        "Bootstrap exchange failed; retrying in {}s.",
+                        delay.as_secs()
+                    );
+                    self.console.write(&retry_msg);
+                    self.update_state = UpdateCheckState::Error(msg);
+                }
             }
         }
 
@@ -684,7 +861,7 @@ impl App for FWUpdater {
                                                                 "Downloading package...",
                                                             );
                                                             std::thread::spawn(move || {
-                                                                let pkg_path = match download_to_user_downloads_verified(
+                                                                let pkg_path = match download_app_pkg_to_staging_verified(
                                                                     &url,
                                                                     &token,
                                                                     &expected_sha,
@@ -778,7 +955,7 @@ impl App for FWUpdater {
                                                                 "Downloading firmware...",
                                                             );
                                                             std::thread::spawn(move || {
-                                                                match download_to_user_downloads_verified(
+                                                                match download_to_app_firmware_verified(
                                                                     &url,
                                                                     &token,
                                                                     &expected_sha,
@@ -826,6 +1003,8 @@ impl App for FWUpdater {
                                             }
                                             if ui.button("Check now").clicked() {
                                                 self.update_check_started = false;
+                                                self.bootstrap_retry_at = None;
+                                                self.bootstrap_failures = 0;
                                                 self.ensure_updater();
                                             }
                                         });

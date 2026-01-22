@@ -40,6 +40,44 @@ fn main() -> anyhow::Result<()> {
     fs::create_dir_all(&tools_dest)?;
     copy_dir_recursively(tools_windows_dir_source, &tools_dest)?;
 
+    // -----------------------------
+    // Optional: seed config for bootstrap installs
+    // -----------------------------
+    if let Ok(pkg_url) = std::env::var("PDES_PKG_URL") {
+        if pkg_url.trim().is_empty() {
+            println!("PDES_PKG_URL is set but empty; skipping seed config.");
+        } else {
+            let mut seed = serde_json::Map::new();
+            seed.insert("bootstrap_pkg_url".to_string(), pkg_url.trim().into());
+
+            if let Ok(v) = std::env::var("PDES_API_BASE_URL")
+                && !v.trim().is_empty()
+            {
+                seed.insert("api_base_url".to_string(), v.trim().into());
+            }
+            if let Ok(v) = std::env::var("PDES_APP_SLUG")
+                && !v.trim().is_empty()
+            {
+                seed.insert("app_slug".to_string(), v.trim().into());
+            }
+            if let Ok(v) = std::env::var("PDES_FIRMWARE_CHANNEL")
+                && !v.trim().is_empty()
+            {
+                seed.insert(
+                    "firmware".to_string(),
+                    serde_json::json!({ "channel": v.trim() }),
+                );
+            }
+
+            let seed_path = format!("{}/seed-config.json", dist_dir);
+            fs::write(
+                &seed_path,
+                serde_json::to_vec_pretty(&serde_json::Value::Object(seed))?,
+            )?;
+            println!("Wrote seed config at {}", seed_path);
+        }
+    }
+
     println!("Distribution folder prepared at {}", dist_dir);
     Ok(())
 }

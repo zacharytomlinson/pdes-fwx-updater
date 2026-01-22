@@ -2,7 +2,11 @@ param(
     [string]$PayloadDir = "dist\PDES",
     [string]$OutputMsi = "dist\PDES.msi",
     [string]$ProductWxs = "installer\product.wxs",
-    [string]$PayloadWxs = "installer\payload.wxs"
+    [string]$PayloadWxs = "installer\payload.wxs",
+    [string]$BootstrapPkgUrl = $env:PDES_PKG_URL,
+    [string]$ApiBaseUrl = $env:PDES_API_BASE_URL,
+    [string]$AppSlug = $env:PDES_APP_SLUG,
+    [string]$FirmwareChannel = $env:PDES_FIRMWARE_CHANNEL
 )
 
 Set-StrictMode -Version Latest
@@ -17,6 +21,23 @@ foreach ($tool in $tools) {
 
 if (-not (Test-Path $PayloadDir)) {
     throw "Payload directory '$PayloadDir' not found. Run build_dist first."
+}
+
+# Optional: write seed-config.json into the payload so the app can bootstrap a device token on first run.
+if ($BootstrapPkgUrl -and $BootstrapPkgUrl.Trim().Length -gt 0) {
+    $seedPath = Join-Path $PayloadDir "seed-config.json"
+    if (-not (Test-Path $seedPath)) {
+        $seed = @{
+            bootstrap_pkg_url = $BootstrapPkgUrl.Trim()
+        }
+
+        if ($ApiBaseUrl -and $ApiBaseUrl.Trim().Length -gt 0) { $seed.api_base_url = $ApiBaseUrl.Trim() }
+        if ($AppSlug -and $AppSlug.Trim().Length -gt 0) { $seed.app_slug = $AppSlug.Trim() }
+        if ($FirmwareChannel -and $FirmwareChannel.Trim().Length -gt 0) { $seed.firmware = @{ channel = $FirmwareChannel.Trim() } }
+
+        $seed | ConvertTo-Json -Depth 5 | Set-Content -Path $seedPath -Encoding UTF8
+        Write-Host "Wrote seed config at $seedPath"
+    }
 }
 
 # Ensure output directory exists

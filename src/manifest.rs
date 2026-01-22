@@ -8,6 +8,8 @@ pub struct UpdateIdentity {
     pub slug: String,
     pub os: String,
     pub arch: String,
+    pub api_base_url: String,
+    pub bootstrap_pkg_url: Option<String>,
     pub firmware_channel: String,
     pub firmware_latest_url: Option<String>,
 }
@@ -25,6 +27,8 @@ impl UpdateIdentity {
             slug: "pdes-fw-x-updater".to_string(),
             os: std::env::consts::OS.to_string(),
             arch: std::env::consts::ARCH.to_string(),
+            api_base_url: default_api_base_url(),
+            bootstrap_pkg_url: None,
             firmware_channel: "stable".to_string(),
             firmware_latest_url: None,
         }
@@ -33,10 +37,7 @@ impl UpdateIdentity {
     pub fn package_latest_url(&self) -> String {
         format!(
             "{}/apps/{}/package/latest?os={}&arch={}",
-            api_base_url(),
-            self.slug,
-            self.os,
-            self.arch
+            &self.api_base_url, self.slug, self.os, self.arch
         )
     }
 
@@ -46,15 +47,13 @@ impl UpdateIdentity {
                 return url.to_string();
             }
             if url.starts_with('/') {
-                return format!("{}{}", api_base_url(), url);
+                return format!("{}{}", &self.api_base_url, url);
             }
-            return format!("{}/{}", api_base_url(), url);
+            return format!("{}/{}", &self.api_base_url, url);
         }
         format!(
-            "{}/apps/{}/firmware/latest?channel={}",
-            api_base_url(),
-            self.slug,
-            self.firmware_channel
+            "{}/apps/{}/firmware/latest?channel={}&os={}&arch={}",
+            &self.api_base_url, self.slug, self.firmware_channel, self.os, self.arch
         )
     }
 }
@@ -63,6 +62,10 @@ impl UpdateIdentity {
 struct AppManifest {
     #[serde(default)]
     app_slug: String,
+    #[serde(default)]
+    api_base_url: Option<String>,
+    #[serde(default)]
+    bootstrap_pkg_url: Option<String>,
     #[serde(default)]
     firmware: FirmwareSection,
     #[serde(default)]
@@ -107,6 +110,11 @@ impl AppManifest {
         let runtime_os = std::env::consts::OS.to_string();
         let runtime_arch = std::env::consts::ARCH.to_string();
 
+        let derived_api_base = self
+            .bootstrap_pkg_url
+            .as_deref()
+            .and_then(derive_api_base_url_from_bootstrap_pkg_url);
+
         UpdateIdentity {
             slug: if self.app_slug.is_empty() {
                 UpdateIdentity::default_for_current_platform().slug
@@ -123,6 +131,12 @@ impl AppManifest {
                 .arch
                 .filter(|a| a == &runtime_arch)
                 .unwrap_or(runtime_arch),
+            api_base_url: self
+                .api_base_url
+                .filter(|s| !s.trim().is_empty())
+                .or(derived_api_base)
+                .unwrap_or_else(default_api_base_url),
+            bootstrap_pkg_url: self.bootstrap_pkg_url,
             firmware_channel: self
                 .firmware
                 .channel
@@ -130,6 +144,16 @@ impl AppManifest {
             firmware_latest_url: self.firmware.latest_url,
         }
     }
+}
+
+fn derive_api_base_url_from_bootstrap_pkg_url(url: &str) -> Option<String> {
+    // Expected: https://YOUR_HOST/bootstrap/<token>/pkg
+    let (prefix, _) = url.split_once("/bootstrap/")?;
+    let prefix = prefix.trim_end_matches('/');
+    if prefix.is_empty() {
+        return None;
+    }
+    Some(format!("{prefix}/api"))
 }
 
 fn candidate_manifest_paths() -> anyhow::Result<Vec<PathBuf>> {
@@ -151,14 +175,29 @@ fn candidate_manifest_paths() -> anyhow::Result<Vec<PathBuf>> {
     paths.push(PathBuf::from(
         "/opt/pdes-win-fw-updater/assets/manifest.json",
     ));
+    paths.push(PathBuf::from("/opt/pdes-win-fw-updater/config.json"));
+    paths.push(PathBuf::from(
+        "/opt/pdes-win-fw-updater/updates/config.json",
+    ));
+
+    if let Ok(path) = crate::app_dirs::updates_manifest_path() {
+        paths.push(path);
+    }
+    if let Ok(path) = crate::app_dirs::updates_config_path() {
+        paths.push(path);
+    }
 
     // Dev convenience
     paths.push(PathBuf::from("manifest.json"));
     paths.push(PathBuf::from("assets/manifest.json"));
+    paths.push(PathBuf::from("config.json"));
 
     Ok(paths)
 }
 
-fn api_base_url() -> &'static str {
-    "https://cdn.palodurosystems.io/api"
+fn default_api_base_url() -> String {
+    std::env::var("PDES_API_BASE_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "https://cdn.palodurosystems.io/api".to_string())
 }
