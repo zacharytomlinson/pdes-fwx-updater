@@ -84,7 +84,7 @@ const UI_CENTER_COLUMN_MAX_WIDTH: f32 = 900.0;
 const UI_CONTROLS_DEFAULT_HEIGHT: f32 = 420.0;
 const UI_CONTROLS_MIN_HEIGHT: f32 = 220.0;
 const UI_LOGO_MAX_HEIGHT: f32 = 80.0;
-const UI_FLASH_PANEL_HEIGHT: f32 = 54.0;
+const UI_FLASH_PANEL_HEIGHT: f32 = 96.0;
 const UI_FLASH_BUTTON_SIZE: Vec2 = Vec2::new(140.0, 32.0);
 
 fn next_bootstrap_backoff(failures: u32) -> Duration {
@@ -132,6 +132,7 @@ struct FWUpdater {
     token_prompt_dismissed: bool,
     token_input: String,
     update_identity: UpdateIdentity,
+    app_version: String,
 
     update_state: UpdateCheckState,
     update_check_started: bool,
@@ -160,6 +161,8 @@ impl Default for FWUpdater {
         let dirs_outcome = crate::app_dirs::ensure_dirs();
         let seed_outcome = crate::seed::ensure_seed_config();
         let update_identity = UpdateIdentity::load_or_default();
+        let app_version = crate::manifest::load_manifest_app_version()
+            .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
         let mut app = Self {
             state: Arc::new(Mutex::new(ViewState::Splash)),
             load_progress: Arc::new(Mutex::new(0.0)),
@@ -195,6 +198,7 @@ impl Default for FWUpdater {
             token_prompt_dismissed: false,
             token_input,
             update_identity,
+            app_version,
             update_state: UpdateCheckState::NotConfigured,
             update_check_started: false,
             bootstrap_in_flight: false,
@@ -654,11 +658,25 @@ impl App for FWUpdater {
                     if let Some(slug) = result.app_slug {
                         self.update_identity.slug = slug;
                     }
-                    if let Some(os) = result.os {
-                        self.update_identity.os = os;
+                    let runtime_os = std::env::consts::OS;
+                    let runtime_arch = std::env::consts::ARCH;
+                    if let Some(os) = result.os.filter(|s| !s.trim().is_empty()) {
+                        if os == runtime_os {
+                            self.update_identity.os = os;
+                        } else {
+                            self.console.write(&format!(
+                                "Bootstrap returned os={os}, but this build is {runtime_os}; ignoring."
+                            ));
+                        }
                     }
-                    if let Some(arch) = result.arch {
-                        self.update_identity.arch = arch;
+                    if let Some(arch) = result.arch.filter(|s| !s.trim().is_empty()) {
+                        if arch == runtime_arch {
+                            self.update_identity.arch = arch;
+                        } else {
+                            self.console.write(&format!(
+                                "Bootstrap returned arch={arch}, but this build is {runtime_arch}; ignoring."
+                            ));
+                        }
                     }
                     self.update_identity.bootstrap_pkg_url = None;
                     self.bootstrap_in_flight = false;
@@ -1142,11 +1160,8 @@ impl App for FWUpdater {
                 TopBottomPanel::bottom("flash_panel")
                     .exact_height(UI_FLASH_PANEL_HEIGHT)
                     .show(ctx, |ui| {
-                        let avail_rect = ui.available_rect_before_wrap();
                         let button_size = UI_FLASH_BUTTON_SIZE;
-                        let button_rect =
-                            egui::Rect::from_center_size(avail_rect.center(), button_size);
-                        ui.scope_builder(egui::UiBuilder::new().max_rect(button_rect), |ui| {
+                        ui.vertical_centered(|ui| {
                             let button =
                                 Button::new(RichText::new("FLASH").color(Color32::DARK_BLUE))
                                     .fill(Color32::GREEN)
@@ -1167,6 +1182,12 @@ impl App for FWUpdater {
                                 let flasher: Flasher = self.flasher.lock().unwrap().clone();
                                 self.start_flash_op(flasher, path, ctx.clone());
                             }
+                            ui.add_space(6.0);
+                            ui.label(
+                                RichText::new(format!("v{}", self.app_version))
+                                    .size(12.0)
+                                    .color(Color32::LIGHT_GRAY),
+                            );
                         });
                     });
 
@@ -1291,8 +1312,8 @@ fn main() -> eframe::Result<()> {
 
     let options = NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1024.0, 820.0])
-            .with_min_inner_size([900.0, 700.0]),
+            .with_inner_size([1024.0, 840.0])
+            .with_min_inner_size([900.0, 720.0]),
         ..Default::default()
     };
     eframe::run_native(

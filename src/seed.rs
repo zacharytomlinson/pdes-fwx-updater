@@ -71,16 +71,20 @@ pub fn persist_bootstrap_exchange(
         obj.insert("app_slug".to_string(), slug.trim().into());
     }
 
+    let runtime_os = std::env::consts::OS;
+    let runtime_arch = std::env::consts::ARCH;
     let platform_os = exchange
         .os
         .as_deref()
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or(std::env::consts::OS);
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && *s == runtime_os)
+        .unwrap_or(runtime_os);
     let platform_arch = exchange
         .arch
         .as_deref()
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or(std::env::consts::ARCH);
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && *s == runtime_arch)
+        .unwrap_or(runtime_arch);
     obj.insert(
         "platform".to_string(),
         serde_json::json!({ "os": platform_os, "arch": platform_arch }),

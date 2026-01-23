@@ -3,6 +3,55 @@ use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+pub fn load_manifest_app_version() -> Option<String> {
+    let paths = candidate_manifest_paths().ok()?;
+    for path in paths {
+        if path.file_name().and_then(|s| s.to_str()) != Some("manifest.json") {
+            continue;
+        }
+        if !path.exists() {
+            continue;
+        }
+        let data = fs::read_to_string(&path).ok()?;
+        let v = serde_json::from_str::<serde_json::Value>(&data).ok()?;
+        let version = find_first_string(
+            &v,
+            &[
+                "app_version",
+                "version",
+                "pkg_version",
+                "build_version",
+                "tag",
+            ],
+        )?;
+        let trimmed = version.trim().to_string();
+        if !trimmed.is_empty() {
+            return Some(trimmed);
+        }
+    }
+    None
+}
+
+fn find_first_string(v: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    match v {
+        serde_json::Value::Object(map) => {
+            for k in keys {
+                if let Some(val) = map.get(*k).and_then(|x| x.as_str()) {
+                    return Some(val.to_string());
+                }
+            }
+            for val in map.values() {
+                if let Some(found) = find_first_string(val, keys) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        serde_json::Value::Array(arr) => arr.iter().find_map(|x| find_first_string(x, keys)),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct UpdateIdentity {
     pub slug: String,
