@@ -1,6 +1,6 @@
 [package]
 name = "pdes-win-fw-updater"
-version = "4.0.0"
+version = "0.4.1"
 edition = "2024"
 description = "Cross-platform PDES firmware updater with Windows MSI and Debian packaging."
 license-file = "LICENSE.txt"
