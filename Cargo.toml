@@ -1,6 +1,6 @@
 [package]
 name = "pdes-fwx-updater"
-version = "0.4.5"
+version = "0.4.6"
 edition = "2024"
 description = "Burns firmware to your Palo Duro Embedded Systems hardware from the comfort of your personal computer! No specialty programming hardware, electrical equipment, or desktop fires involved."
 license-file = "LICENSE.txt"
