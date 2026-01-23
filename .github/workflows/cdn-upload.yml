@@ -1,0 +1,235 @@
+name: Upload Packages to CDN
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to upload (e.g. v0.4.7)"
+        required: true
+        type: string
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    env:
+      PDES_CDN_UPLOAD_TOKEN: ${{ secrets.PDES_CDN_UPLOAD_TOKEN }}
+      PDES_APP_SLUG: ${{ vars.PDES_APP_SLUG }}
+    steps:
+      - name: Resolve tag
+        id: tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "release" ]]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            tag="${{ inputs.tag }}"
+            echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out sources (for icon + build script)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+
+      - name: Verify Cargo.toml version matches tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.tag.outputs.tag }}"
+          expected="${tag#v}"
+          actual="$(python3 -c 'import re; from pathlib import Path; data=Path("Cargo.toml").read_text(encoding="utf-8"); m=re.search(r"(?ms)^\\[package\\][\\s\\S]*?^version\\s*=\\s*\\\"([^\\\"]+)\\\"", data); print(m.group(1) if m else "")')"
+          if [[ -z "$actual" ]]; then
+            echo "Unable to read [package].version from Cargo.toml" >&2
+            exit 1
+          fi
+          if [[ "$actual" != "$expected" ]]; then
+            echo "Cargo.toml version '$actual' does not match tag '$expected'" >&2
+            exit 1
+          fi
+
+      - name: Download GitHub Release assets (.msi + .deb)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.tag.outputs.tag }}"
+          mkdir -p artifacts/release
+          gh --version
+          gh release download "$tag" -D artifacts/release \
+            --pattern '*.msi' \
+            --pattern '*.deb'
+
+          msi="$(find artifacts/release -type f -name '*.msi' | head -n 1 || true)"
+          deb="$(find artifacts/release -type f -name '*.deb' | head -n 1 || true)"
+          if [[ -z "$msi" || -z "$deb" ]]; then
+            echo "Expected both .msi and .deb assets in the GitHub Release." >&2
+            echo "Found MSI: ${msi:-<none>}" >&2
+            echo "Found DEB: ${deb:-<none>}" >&2
+            exit 1
+          fi
+
+      - name: Build CDN .pkg archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x scripts/build_pkg.sh
+
+          slug="${PDES_APP_SLUG:-}"
+          if [[ -z "$slug" ]]; then
+            slug="pdes-fwx-updater"
+          fi
+          version="$(python3 -c 'import re; from pathlib import Path; data=Path("Cargo.toml").read_text(encoding="utf-8"); m=re.search(r"(?ms)^\\[package\\][\\s\\S]*?^version\\s*=\\s*\\\"([^\\\"]+)\\\"", data); print(m.group(1) if m else "")')"
+          if [[ -z "$version" ]]; then
+            echo "Unable to determine version for .pkg build" >&2
+            exit 1
+          fi
+
+          icon="assets/icon.png"
+          if [[ ! -f "$icon" ]]; then
+            echo "Missing icon at $icon" >&2
+            exit 1
+          fi
+
+          msi_path="$(find artifacts/release -type f -name '*.msi' | head -n 1)"
+          deb_path="$(find artifacts/release -type f -name '*.deb' | head -n 1)"
+
+          deb_arch="any"
+          deb_base="$(basename "$deb_path")"
+          case "$deb_base" in
+            *_amd64.deb) deb_arch="x86_64" ;;
+            *_arm64.deb) deb_arch="aarch64" ;;
+          esac
+
+          mkdir -p artifacts/pdes-cdn-pkg
+
+          scripts/build_pkg.sh \
+            --slug "$slug" \
+            --version "$version" \
+            --os windows \
+            --arch x86_64 \
+            --installer "$msi_path" \
+            --icon "$icon" \
+            --display-name "PDES Firmware Updater" \
+            --summary "Firmware updater installer" \
+            --out "artifacts/pdes-cdn-pkg/${slug}-${version}-windows-x86_64.pkg"
+
+          scripts/build_pkg.sh \
+            --slug "$slug" \
+            --version "$version" \
+            --os linux \
+            --arch "$deb_arch" \
+            --installer "$deb_path" \
+            --icon "$icon" \
+            --display-name "PDES Firmware Updater" \
+            --summary "Firmware updater installer" \
+            --out "artifacts/pdes-cdn-pkg/${slug}-${version}-linux-${deb_arch}.pkg"
+
+      - name: Upload .pkg files to CDN
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${PDES_CDN_UPLOAD_TOKEN:-}" ]]; then
+            echo "Missing secrets.PDES_CDN_UPLOAD_TOKEN" >&2
+            exit 1
+          fi
+
+          slug="${PDES_APP_SLUG:-}"
+          if [[ -z "$slug" ]]; then
+            slug="pdes-fwx-updater"
+          fi
+          version="$(python3 -c 'import re; from pathlib import Path; data=Path("Cargo.toml").read_text(encoding="utf-8"); m=re.search(r"(?ms)^\\[package\\][\\s\\S]*?^version\\s*=\\s*\\\"([^\\\"]+)\\\"", data); print(m.group(1) if m else "")')"
+          if [[ -z "$version" ]]; then
+            echo "Unable to determine version for upload" >&2
+            exit 1
+          fi
+
+          endpoint="https://apps.palodurosystems.io/api/apps/${slug}/package/upload"
+
+          upload() {
+            local os="$1"
+            local arch="$2"
+            local path="$3"
+
+            local size
+            size="$(wc -c <"$path" | tr -d ' ')"
+            echo "Uploading: $path (${size} bytes) os=${os} arch=${arch} version=${version}"
+
+            local headers_file body_file http_code curl_exit
+            headers_file="$(mktemp)"
+            body_file="$(mktemp)"
+
+            set +e
+            http_code="$(
+              curl -sS --retry 3 --retry-all-errors \
+                -o "$body_file" \
+                -D "$headers_file" \
+                -w "%{http_code}" \
+                -H "Authorization: Bearer ${PDES_CDN_UPLOAD_TOKEN}" \
+                -F "os=${os}" \
+                -F "arch=${arch}" \
+                -F "version=${version}" \
+                -F "file=@${path};filename=$(basename "$path")" \
+                "${endpoint}"
+            )"
+            curl_exit="$?"
+            set -e
+
+            if [[ "$curl_exit" -ne 0 ]]; then
+              echo "Upload failed: curl exit code ${curl_exit}" >&2
+              echo "--- response headers (if any) ---" >&2
+              sed -n '1,120p' "$headers_file" >&2 || true
+              echo "--- response body (if any) ---" >&2
+              head -c 8192 "$body_file" >&2 || true
+              echo >&2
+              rm -f "$headers_file" "$body_file"
+              exit 1
+            fi
+
+            if [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]]; then
+              cat "$body_file" || true
+              rm -f "$headers_file" "$body_file"
+              return 0
+            fi
+
+            echo "Upload failed: HTTP ${http_code}" >&2
+            echo "--- response headers ---" >&2
+            sed -n '1,120p' "$headers_file" >&2 || true
+            echo "--- response body ---" >&2
+            head -c 8192 "$body_file" >&2 || true
+            echo >&2
+            rm -f "$headers_file" "$body_file"
+            exit 1
+          }
+
+          mapfile -t pkgs < <(find artifacts/pdes-cdn-pkg -type f -name '*.pkg' | sort)
+          if (( ${#pkgs[@]} == 0 )); then
+            echo "No .pkg artifacts found under ./artifacts/pdes-cdn-pkg" >&2
+            exit 1
+          fi
+
+          for f in "${pkgs[@]}"; do
+            base="$(basename "$f")"
+            os=""
+            arch=""
+            case "$base" in
+              *-windows-*.pkg) os="windows" ;;
+              *-linux-*.pkg) os="linux" ;;
+              *-macos-*.pkg) os="macos" ;;
+              *)
+                echo "Unable to determine os from filename: $base" >&2
+                exit 1
+                ;;
+            esac
+            arch="${base%.pkg}"
+            arch="${arch##*-}"
+            if [[ -z "$arch" ]]; then
+              echo "Unable to determine arch from filename: $base" >&2
+              exit 1
+            fi
+            upload "$os" "$arch" "$f"
+          done
+
