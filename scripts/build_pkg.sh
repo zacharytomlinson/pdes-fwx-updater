@@ -154,10 +154,9 @@ if tar --version 2>/dev/null | grep -q "GNU tar"; then
     --group=0 \
     --numeric-owner \
     -cf - \
-    -C "$tmpdir" . | gzip -n >"$out"
+    -C "$tmpdir" . | gzip -9 -n >"$out"
 else
   tar -czf "$out" -C "$tmpdir" .
 fi
 
 echo "Wrote $out"
-

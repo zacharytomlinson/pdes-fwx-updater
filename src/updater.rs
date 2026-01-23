@@ -160,7 +160,7 @@ fn cdn_origin() -> String {
     std::env::var("PDES_CDN_ORIGIN")
         .ok()
         .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "https://cdn.palodurosystems.io".to_string())
+        .unwrap_or_else(|| "https://apps.palodurosystems.io".to_string())
 }
 
 fn normalize_sha256(sha: String) -> Option<String> {

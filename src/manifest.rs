@@ -248,5 +248,5 @@ fn default_api_base_url() -> String {
     std::env::var("PDES_API_BASE_URL")
         .ok()
         .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "https://cdn.palodurosystems.io/api".to_string())
+        .unwrap_or_else(|| "https://apps.palodurosystems.io/api".to_string())
 }
