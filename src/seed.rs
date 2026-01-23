@@ -164,11 +164,15 @@ fn seed_file_candidates() -> anyhow::Result<Vec<PathBuf>> {
         out.push(dir.join("config.seed.json"));
     }
 
-    // Prefer Linux-named /opt root, but keep legacy path for older installs.
-    out.push(PathBuf::from("/opt/pdes-fw-updater/seed-config.json"));
-    out.push(PathBuf::from("/opt/pdes-fw-updater/config.seed.json"));
-    out.push(PathBuf::from("/opt/pdes-win-fw-updater/seed-config.json"));
-    out.push(PathBuf::from("/opt/pdes-win-fw-updater/config.seed.json"));
+    // Prefer current /opt root, but keep legacy paths for older installs.
+    for root in [
+        "/opt/pdes-fwx-updater",
+        "/opt/pdes-fw-updater",
+        "/opt/pdes-win-fw-updater",
+    ] {
+        out.push(PathBuf::from(format!("{root}/seed-config.json")));
+        out.push(PathBuf::from(format!("{root}/config.seed.json")));
+    }
 
     Ok(out)
 }

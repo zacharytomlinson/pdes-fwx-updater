@@ -2,7 +2,7 @@ param(
     [Parameter(Mandatory=$true)][string]$Origin,
     [Parameter(Mandatory=$true)][string]$WriterToken,
     [string]$ApiBase = "",
-    [string]$AppSlug = "pdes-fw-x-updater",
+    [string]$AppSlug = "pdes-fwx-updater",
     [string]$Target = "windows:x86_64",
     [int]$ExpiresInSeconds = 3600,
     [int]$MaxUses = 10

@@ -2,7 +2,8 @@
 
 set -euo pipefail
 
-INSTALL_ROOT="/opt/pdes-win-fw-updater"
+INSTALL_ROOT="/opt/pdes-fwx-updater"
+LEGACY_INSTALL_ROOT="/opt/pdes-win-fw-updater"
 BOSSAC_PATH="${INSTALL_ROOT}/tools/bossac"
 UDEV_RULES_FILE="/etc/udev/rules.d/99-pdes.rules"
 
@@ -53,6 +54,9 @@ fi
 if [[ -x "$BOSSAC_PATH" ]]; then
   echo "Found bundled bossac at $BOSSAC_PATH"
   "$BOSSAC_PATH" --version || true
+elif [[ -x "${LEGACY_INSTALL_ROOT}/tools/bossac" ]]; then
+  echo "Found bundled bossac at ${LEGACY_INSTALL_ROOT}/tools/bossac"
+  "${LEGACY_INSTALL_ROOT}/tools/bossac" --version || true
 else
   echo "NOTE: bundled bossac not found at $BOSSAC_PATH" >&2
   echo "Install the PDES .deb to get bossac bundled, or place bossac at that path." >&2

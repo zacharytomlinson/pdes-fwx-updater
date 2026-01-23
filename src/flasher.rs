@@ -265,9 +265,14 @@ impl Flasher {
             }
 
             // Debian package installs tools under /opt
-            let opt_bundled = Path::new("/opt/pdes-win-fw-updater/tools").join(bossac_name);
-            if opt_bundled.exists() {
-                return opt_bundled;
+            for root in [
+                "/opt/pdes-fwx-updater/tools",
+                "/opt/pdes-win-fw-updater/tools",
+            ] {
+                let opt_bundled = Path::new(root).join(bossac_name);
+                if opt_bundled.exists() {
+                    return opt_bundled;
+                }
             }
 
             // Dev tree: repo_root/tools/{windows|linux}/bossac*

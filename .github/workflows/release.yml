@@ -185,9 +185,130 @@ jobs:
             dist/PDES.msi
             dist/PDES
 
-  release:
+  upload-cdn:
     runs-on: ubuntu-latest
     needs: [build-linux, build-windows]
+    env:
+      PDES_CDN_UPLOAD_TOKEN: ${{ secrets.PDES_CDN_UPLOAD_TOKEN }}
+      PDES_APP_SLUG: ${{ vars.PDES_APP_SLUG }}
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Check out sources (for icon)
+        uses: actions/checkout@v4
+
+      - name: Build CDN .pkg archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x scripts/build_pkg.sh
+
+          version="$(
+            python3 - <<'PY'
+            import re
+            from pathlib import Path
+            data = Path("Cargo.toml").read_text(encoding="utf-8")
+            m = re.search(r'(?ms)^\\[package\\][\\s\\S]*?^version\\s*=\\s*\"([^\"]+)\"', data)
+            if not m:
+              raise SystemExit("Unable to read [package].version from Cargo.toml")
+            print(m.group(1))
+            PY
+          )"
+
+          slug="${PDES_APP_SLUG:-}"
+          if [[ -z "$slug" ]]; then
+            slug="pdes-fwx-updater"
+          fi
+
+          icon="assets/icon.png"
+          if [[ ! -f "$icon" ]]; then
+            echo "Missing icon at $icon" >&2
+            exit 1
+          fi
+
+          mkdir -p artifacts/pdes-cdn-pkg
+
+          msi_path="$(find artifacts -type f -name '*.msi' | head -n 1 || true)"
+          deb_path="$(find artifacts -type f -name '*.deb' | head -n 1 || true)"
+          if [[ -z "$msi_path" || -z "$deb_path" ]]; then
+            echo "Expected both .msi and .deb artifacts under ./artifacts" >&2
+            echo "Found MSI: ${msi_path:-<none>}" >&2
+            echo "Found DEB: ${deb_path:-<none>}" >&2
+            exit 1
+          fi
+
+          deb_arch="any"
+          deb_base="$(basename "$deb_path")"
+          case "$deb_base" in
+            *_amd64.deb) deb_arch="x86_64" ;;
+            *_arm64.deb) deb_arch="aarch64" ;;
+          esac
+
+          scripts/build_pkg.sh \
+            --slug "$slug" \
+            --version "$version" \
+            --os windows \
+            --arch x86_64 \
+            --installer "$msi_path" \
+            --icon "$icon" \
+            --display-name "PDES Firmware Updater" \
+            --summary "Firmware updater installer" \
+            --out "artifacts/pdes-cdn-pkg/${slug}-${version}-windows-x86_64.pkg"
+
+          scripts/build_pkg.sh \
+            --slug "$slug" \
+            --version "$version" \
+            --os linux \
+            --arch "$deb_arch" \
+            --installer "$deb_path" \
+            --icon "$icon" \
+            --display-name "PDES Firmware Updater" \
+            --summary "Firmware updater installer" \
+            --out "artifacts/pdes-cdn-pkg/${slug}-${version}-linux-${deb_arch}.pkg"
+
+      - name: Upload installers + icon to CDN
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${PDES_CDN_UPLOAD_TOKEN:-}" ]]; then
+            echo "Missing secrets.PDES_CDN_UPLOAD_TOKEN" >&2
+            exit 1
+          fi
+
+          endpoint="https://cdn.palodurosystems.io/api/upload"
+
+          upload() {
+            local path="$1"
+            if [[ ! -f "$path" ]]; then
+              echo "Missing file: $path" >&2
+              exit 1
+            fi
+            echo "Uploading: $path"
+            curl -fsS --retry 5 --retry-all-errors \
+              -H "Authorization: Bearer ${PDES_CDN_UPLOAD_TOKEN}" \
+              -F "file=@${path};filename=$(basename "$path")" \
+              "${endpoint}"
+            echo
+          }
+
+          mapfile -t installers < <(find artifacts -type f \( -name '*.msi' -o -name '*.deb' -o -name '*.pkg' \) | sort)
+          if (( ${#installers[@]} == 0 )); then
+            echo "No .msi/.deb/.pkg artifacts found under ./artifacts" >&2
+            exit 1
+          fi
+
+          for f in "${installers[@]}"; do
+            upload "$f"
+          done
+
+          upload "assets/icon.png"
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [build-linux, build-windows, upload-cdn]
     permissions:
       contents: write
     steps:

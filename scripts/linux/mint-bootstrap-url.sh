@@ -4,7 +4,7 @@ set -euo pipefail
 ORIGIN="${ORIGIN:-}"
 API_BASE="${API_BASE:-}"
 WRITER_TOKEN="${WRITER_TOKEN:-}"
-APP_SLUG="${APP_SLUG:-pdes-fw-x-updater}"
+APP_SLUG="${APP_SLUG:-pdes-fwx-updater}"
 TARGET="${TARGET:-windows:x86_64}"
 EXPIRES_IN_SECONDS="${EXPIRES_IN_SECONDS:-3600}"
 MAX_USES="${MAX_USES:-10}"
@@ -19,7 +19,7 @@ Env:
   WRITER_TOKEN (required)
   ORIGIN (required, e.g. https://YOUR_HOST)
   API_BASE (optional, defaults to ORIGIN/api)
-  APP_SLUG (default: pdes-fw-x-updater)
+  APP_SLUG (default: pdes-fwx-updater)
   TARGET (default: windows:x86_64)
   EXPIRES_IN_SECONDS (default: 3600)
   MAX_USES (default: 10, minimum enforced: 2)

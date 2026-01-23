@@ -109,6 +109,20 @@ fn launch_installer_impl(installer_path: &Path) -> anyhow::Result<()> {
     if spawn_if_available("xdg-open", &[installer_path.to_string_lossy().as_ref()]).is_ok() {
         return Ok(());
     }
+    // Prefer apt so renamed packages can replace older names cleanly.
+    let installer = installer_path.to_string_lossy();
+    if is_on_path("pkexec")
+        && is_on_path("apt-get")
+        && spawn_if_available("pkexec", &["apt-get", "install", "-y", installer.as_ref()]).is_ok()
+    {
+        return Ok(());
+    }
+    if is_on_path("pkexec")
+        && is_on_path("apt")
+        && spawn_if_available("pkexec", &["apt", "install", "-y", installer.as_ref()]).is_ok()
+    {
+        return Ok(());
+    }
     if spawn_if_available(
         "pkexec",
         &["dpkg", "-i", installer_path.to_string_lossy().as_ref()],
@@ -129,6 +143,16 @@ fn launch_installer_impl(installer_path: &Path) -> anyhow::Result<()> {
         "Automatic installer launch is not implemented for this OS. Installer is at: {}",
         installer_path.display()
     );
+}
+
+#[cfg(target_os = "linux")]
+fn is_on_path(program: &str) -> bool {
+    use std::env;
+
+    let Some(path) = env::var_os("PATH") else {
+        return false;
+    };
+    env::split_paths(&path).any(|dir| dir.join(program).exists())
 }
 
 fn extract_archive(pkg_path: &Path, dest: &Path) -> anyhow::Result<()> {

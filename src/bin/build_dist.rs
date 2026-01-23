@@ -4,7 +4,7 @@ fn main() -> anyhow::Result<()> {
     // -----------------------------
     // Configuration
     // -----------------------------
-    let exe_source = "./target/x86_64-pc-windows-gnu/release/pdes-win-fw-updater.exe";
+    let exe_source = "./target/x86_64-pc-windows-gnu/release/pdes-fwx-updater.exe";
     let dist_dir = "./dist/PDES";
 
     let assets_dir = "./assets";

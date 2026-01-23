@@ -73,7 +73,7 @@ impl UpdateIdentity {
 
     pub fn default_for_current_platform() -> Self {
         Self {
-            slug: "pdes-fw-x-updater".to_string(),
+            slug: "pdes-fwx-updater".to_string(),
             os: std::env::consts::OS.to_string(),
             arch: std::env::consts::ARCH.to_string(),
             api_base_url: default_api_base_url(),
@@ -221,15 +221,13 @@ fn candidate_manifest_paths() -> anyhow::Result<Vec<PathBuf>> {
         paths.push(dir.join("assets").join("manifest.json"));
     }
 
-    // Debian package assets live under /opt
-    paths.push(PathBuf::from("/opt/pdes-win-fw-updater/manifest.json"));
-    paths.push(PathBuf::from(
-        "/opt/pdes-win-fw-updater/assets/manifest.json",
-    ));
-    paths.push(PathBuf::from("/opt/pdes-win-fw-updater/config.json"));
-    paths.push(PathBuf::from(
-        "/opt/pdes-win-fw-updater/updates/config.json",
-    ));
+    // Debian package assets live under /opt (prefer current path, keep legacy for older installs).
+    for root in ["/opt/pdes-fwx-updater", "/opt/pdes-win-fw-updater"] {
+        paths.push(PathBuf::from(format!("{root}/manifest.json")));
+        paths.push(PathBuf::from(format!("{root}/assets/manifest.json")));
+        paths.push(PathBuf::from(format!("{root}/config.json")));
+        paths.push(PathBuf::from(format!("{root}/updates/config.json")));
+    }
 
     if let Ok(path) = crate::app_dirs::updates_manifest_path() {
         paths.push(path);
