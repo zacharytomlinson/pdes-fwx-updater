@@ -35,9 +35,10 @@ impl UpdateIdentity {
     }
 
     pub fn package_latest_url(&self) -> String {
+        let target = format!("{}:{}", self.os, self.arch);
         format!(
-            "{}/apps/{}/package/latest?os={}&arch={}",
-            &self.api_base_url, self.slug, self.os, self.arch
+            "{}/apps/{}/package/latest?os={}&arch={}&target={}",
+            &self.api_base_url, self.slug, self.os, self.arch, target
         )
     }
 
@@ -51,9 +52,10 @@ impl UpdateIdentity {
             }
             return format!("{}/{}", &self.api_base_url, url);
         }
+        let target = format!("{}:{}", self.os, self.arch);
         format!(
-            "{}/apps/{}/firmware/latest?channel={}&os={}&arch={}",
-            &self.api_base_url, self.slug, self.firmware_channel, self.os, self.arch
+            "{}/apps/{}/firmware/latest?channel={}&os={}&arch={}&target={}",
+            &self.api_base_url, self.slug, self.firmware_channel, self.os, self.arch, target
         )
     }
 }

@@ -3,6 +3,7 @@ param(
     [string]$OutputMsi = "dist\PDES.msi",
     [string]$ProductWxs = "installer\product.wxs",
     [string]$PayloadWxs = "installer\payload.wxs",
+    [string]$ProductVersion = $env:PDES_PRODUCT_VERSION,
     [string]$BootstrapPkgUrl = $env:PDES_PKG_URL,
     [string]$ApiBaseUrl = $env:PDES_API_BASE_URL,
     [string]$AppSlug = $env:PDES_APP_SLUG,
@@ -11,6 +12,36 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+function Resolve-ProductVersion {
+    param(
+        [string]$CargoTomlPath = "Cargo.toml"
+    )
+
+    if (-not (Test-Path $CargoTomlPath)) {
+        throw "Cargo.toml not found at '$CargoTomlPath'"
+    }
+
+    $inPackage = $false
+    foreach ($line in (Get-Content $CargoTomlPath)) {
+        if ($line -match '^\s*\[package\]\s*$') {
+            $inPackage = $true
+            continue
+        }
+        if ($inPackage -and $line -match '^\s*\[') {
+            break
+        }
+        if ($inPackage -and $line -match '^\s*version\s*=\s*"([^"]+)"') {
+            return $Matches[1]
+        }
+    }
+
+    throw "Unable to resolve [package] version from '$CargoTomlPath'"
+}
+
+if (-not $ProductVersion -or $ProductVersion.Trim().Length -eq 0) {
+    $ProductVersion = Resolve-ProductVersion
+}
 
 $tools = @("heat", "candle", "light")
 foreach ($tool in $tools) {
@@ -179,7 +210,7 @@ foreach ($cleanupId in $cleanupIds) {
 $payloadXml.Save($PayloadWxs)
 
 # Compile + link
-candle -dSourceDir="$PayloadDir" $ProductWxs $PayloadWxs
+candle -dSourceDir="$PayloadDir" -dProductVersion="$ProductVersion" $ProductWxs $PayloadWxs
 light -ext WixUIExtension -ext WixUtilExtension -o $OutputMsi product.wixobj payload.wixobj
 
 Write-Host "MSI created at $OutputMsi"

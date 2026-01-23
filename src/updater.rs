@@ -48,23 +48,53 @@ pub fn check_for_updates(
 }
 
 fn fetch_artifact(url: &str, token: &str) -> anyhow::Result<Option<ArtifactUpdate>> {
-    let response = ureq::get(url)
+    let response = match ureq::get(url)
         .timeout(Duration::from_secs(10))
         .set("Authorization", &format!("Bearer {token}"))
         .set("Accept", "application/json")
         .call()
-        .context("Update check request failed")?;
+    {
+        Ok(resp) => resp,
+        Err(ureq::Error::Status(code, resp)) => {
+            let body = resp.into_string().unwrap_or_default();
+            let snippet = body_snippet(&body);
+            if snippet.is_empty() {
+                anyhow::bail!("Update check HTTP {code} from {url}");
+            }
+            anyhow::bail!("Update check HTTP {code} from {url}: {snippet}");
+        }
+        Err(ureq::Error::Transport(t)) => {
+            anyhow::bail!("Update check transport error for {url}: {t}");
+        }
+    };
 
     let body = response
         .into_string()
-        .context("Unable to read update response")?;
+        .with_context(|| format!("Unable to read update response from {url}"))?;
 
     if let Ok(payload) = serde_json::from_str::<ArtifactPayload>(&body) {
         return Ok(payload.into_update());
     }
 
-    let v: serde_json::Value = serde_json::from_str(&body).context("Invalid JSON response")?;
+    let v: serde_json::Value = serde_json::from_str(&body)
+        .with_context(|| format!("Invalid JSON response from {url}: {}", body_snippet(&body)))?;
     Ok(extract_update_from_value(&v))
+}
+
+fn body_snippet(body: &str) -> String {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let mut snippet: String = trimmed
+        .replace(['\r', '\n'], " ")
+        .chars()
+        .take(240)
+        .collect();
+    if trimmed.chars().count() > 240 {
+        snippet.push('…');
+    }
+    snippet
 }
 
 impl ArtifactPayload {

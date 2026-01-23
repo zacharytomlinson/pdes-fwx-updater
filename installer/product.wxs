@@ -4,7 +4,7 @@
     Id="*"
     Name="PDES Firmware Updater"
     Language="1033"
-    Version="0.1.0"
+    Version="$(var.ProductVersion)"
     Manufacturer="Palo Duro Embedded Systems"
     UpgradeCode="9F8C1B76-2D0F-4EC7-9145-19B79381B190">
     <Package InstallerVersion="500" Compressed="yes" InstallScope="perUser" Platform="x64" />

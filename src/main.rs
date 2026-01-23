@@ -157,6 +157,8 @@ impl Default for FWUpdater {
         let (ui_tx, ui_rx) = channel();
         let settings = AppSettings::load_or_default();
         let token_input = settings.update_token.clone().unwrap_or_default();
+        let dirs_outcome = crate::app_dirs::ensure_dirs();
+        let seed_outcome = crate::seed::ensure_seed_config();
         let update_identity = UpdateIdentity::load_or_default();
         let mut app = Self {
             state: Arc::new(Mutex::new(ViewState::Splash)),
@@ -205,12 +207,12 @@ impl Default for FWUpdater {
             ui_rx,
         };
 
-        if let Err(e) = crate::app_dirs::ensure_dirs() {
+        if let Err(e) = dirs_outcome {
             let msg = format!("Unable to initialize persistent storage: {e:#}");
             app.console.write(&msg);
         }
 
-        match crate::seed::ensure_seed_config() {
+        match seed_outcome {
             Ok(Some(path)) => {
                 let msg = format!("Seeded updater config at {}", path.display());
                 app.console.write(&msg);
@@ -280,6 +282,7 @@ impl FWUpdater {
         let firmware_url = self.update_identity.firmware_latest_url();
 
         let tx = self.update_tx.clone();
+        let ot_tx = self.ot_tx.clone();
         let current_version = env!("CARGO_PKG_VERSION").to_string();
         std::thread::spawn(move || {
             let _ = tx.send(UpdateCheckState::Checking);
@@ -296,6 +299,7 @@ impl FWUpdater {
                     }
                 }
                 Err(e) => {
+                    let _ = ot_tx.send(format!("Update check failed: {e:#}"));
                     let _ = tx.send(UpdateCheckState::Error(e.to_string()));
                 }
             }
