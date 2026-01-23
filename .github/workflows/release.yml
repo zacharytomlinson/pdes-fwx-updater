@@ -224,7 +224,19 @@ jobs:
           fi
 
           msi_path="$(find artifacts -type f -name '*.msi' | head -n 1 || true)"
-          deb_path="$(find artifacts -type f -name '*.deb' | head -n 1 || true)"
+
+          mapfile -t deb_candidates < <(find artifacts -type f -name '*.deb' | sort)
+          deb_path=""
+          for cand in "${deb_candidates[@]}"; do
+            base="$(basename "$cand")"
+            if [[ "$base" == *_arm64.deb || "$base" == *_aarch64.deb ]]; then
+              deb_path="$cand"
+              break
+            fi
+          done
+          if [[ -z "$deb_path" && ${#deb_candidates[@]} -gt 0 ]]; then
+            deb_path="${deb_candidates[0]}"
+          fi
           if [[ -z "$msi_path" || -z "$deb_path" ]]; then
             echo "Expected both .msi and .deb artifacts under ./artifacts" >&2
             echo "Found MSI: ${msi_path:-<none>}" >&2
@@ -233,11 +245,27 @@ jobs:
           fi
 
           deb_arch="any"
-          deb_base="$(basename "$deb_path")"
-          case "$deb_base" in
-            *_amd64.deb) deb_arch="x86_64" ;;
-            *_arm64.deb) deb_arch="aarch64" ;;
+          deb_arch_raw="$(dpkg-deb -f "$deb_path" Architecture 2>/dev/null || true)"
+          deb_arch_raw="$(echo "${deb_arch_raw:-}" | tr -d '[:space:]')"
+          if [[ -z "$deb_arch_raw" ]]; then
+            deb_base="$(basename "$deb_path")"
+            case "$deb_base" in
+              *_amd64.deb) deb_arch_raw="amd64" ;;
+              *_arm64.deb) deb_arch_raw="arm64" ;;
+              *_aarch64.deb) deb_arch_raw="arm64" ;;
+            esac
+          fi
+          case "$deb_arch_raw" in
+            amd64) deb_arch="x86_64" ;;
+            arm64) deb_arch="aarch64" ;;
           esac
+
+          if [[ "$deb_arch" == "any" ]]; then
+            echo "Unable to map Debian architecture '${deb_arch_raw:-<unknown>}' to an updater arch (expected amd64 or arm64)." >&2
+            exit 1
+          fi
+
+          echo "Selected DEB: $deb_path (deb_arch_raw=${deb_arch_raw:-<unknown>} mapped_arch=${deb_arch})"
 
           mkdir -p artifacts/pdes-cdn-pkg
 

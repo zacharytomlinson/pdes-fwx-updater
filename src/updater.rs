@@ -12,7 +12,6 @@ pub struct UpdateResult {
 pub struct ArtifactUpdate {
     pub latest_version: String,
     pub download_url: Option<String>,
-    pub notes: Option<String>,
     pub sha256: Option<String>,
 }
 
@@ -31,8 +30,6 @@ struct ArtifactPayload {
     version: Option<String>,
     #[serde(default, alias = "download_url", alias = "url")]
     url: Option<String>,
-    #[serde(default)]
-    notes: Option<String>,
     #[serde(default, alias = "pkg_sha256", alias = "sha256")]
     sha256: Option<String>,
 }
@@ -102,7 +99,6 @@ impl ArtifactPayload {
         Some(ArtifactUpdate {
             latest_version: self.version?,
             download_url: self.url.and_then(normalize_download_url),
-            notes: self.notes,
             sha256: self.sha256.and_then(normalize_sha256),
         })
     }
@@ -112,12 +108,10 @@ fn extract_update_from_value(v: &serde_json::Value) -> Option<ArtifactUpdate> {
     let version = find_first_string(v, &["latest_version", "version", "tag", "app_version"])?;
     let url = find_first_string(v, &["download_url", "url", "package_url", "installer_url"])
         .and_then(normalize_download_url);
-    let notes = find_first_string(v, &["notes", "changelog", "release_notes"]);
     let sha256 = find_first_string(v, &["pkg_sha256", "sha256"]).and_then(normalize_sha256);
     Some(ArtifactUpdate {
         latest_version: version,
         download_url: url,
-        notes,
         sha256,
     })
 }

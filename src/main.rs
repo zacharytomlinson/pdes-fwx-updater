@@ -78,13 +78,14 @@ enum UiEvent {
     SetFirmwarePath(PathBuf),
     BootstrapComplete(crate::bootstrap::BootstrapExchangeResult),
     BootstrapFailed(String),
+    ExitRequested,
 }
 
 const UI_CENTER_COLUMN_MAX_WIDTH: f32 = 900.0;
 const UI_CONTROLS_DEFAULT_HEIGHT: f32 = 420.0;
 const UI_CONTROLS_MIN_HEIGHT: f32 = 220.0;
 const UI_LOGO_MAX_HEIGHT: f32 = 80.0;
-const UI_FLASH_PANEL_HEIGHT: f32 = 96.0;
+const UI_FLASH_PANEL_HEIGHT: f32 = 124.0;
 const UI_FLASH_BUTTON_SIZE: Vec2 = Vec2::new(140.0, 32.0);
 
 fn next_bootstrap_backoff(failures: u32) -> Duration {
@@ -133,6 +134,9 @@ struct FWUpdater {
     token_input: String,
     update_identity: UpdateIdentity,
     app_version: String,
+    splash_status: String,
+    splash_app_update_in_flight: bool,
+    exit_requested: bool,
 
     update_state: UpdateCheckState,
     update_check_started: bool,
@@ -199,6 +203,9 @@ impl Default for FWUpdater {
             token_input,
             update_identity,
             app_version,
+            splash_status: "Starting...".to_string(),
+            splash_app_update_in_flight: false,
+            exit_requested: false,
             update_state: UpdateCheckState::NotConfigured,
             update_check_started: false,
             bootstrap_in_flight: false,
@@ -258,14 +265,14 @@ impl FWUpdater {
         }
     }
 
-    fn ensure_updater(&mut self) {
+    fn ensure_updater(&mut self, allow_prompt: bool) {
         let token = self.effective_update_token();
         if token.is_none() {
             if self.maybe_start_bootstrap_exchange() {
                 return;
             }
             self.update_state = UpdateCheckState::NotConfigured;
-            if !self.token_prompt_dismissed {
+            if allow_prompt && !self.token_prompt_dismissed {
                 self.token_prompt_open = true;
             }
             return;
@@ -308,6 +315,140 @@ impl FWUpdater {
                 }
             }
         });
+    }
+
+    fn start_app_update_install(&mut self, url: String, token: String, expected_sha: String) {
+        if self.splash_app_update_in_flight {
+            return;
+        }
+        self.splash_app_update_in_flight = true;
+
+        let ot_tx = self.ot_tx.clone();
+        let lp_tx = self.lp_tx.clone();
+        let stat_tx = self.stat_tx.clone();
+        let ui_tx = self.ui_tx.clone();
+
+        std::thread::spawn(move || {
+            let _ = lp_tx.send(0.35);
+            let _ = ot_tx.send("Downloading update package...".to_string());
+            let pkg_path = match download_app_pkg_to_staging_verified(&url, &token, &expected_sha) {
+                Ok(path) => path,
+                Err(e) => {
+                    let _ = ot_tx.send(format!("Package download failed: {e:#}"));
+                    let _ = stat_tx.send(ViewState::Main);
+                    return;
+                }
+            };
+
+            let _ = lp_tx.send(0.65);
+            let _ = ot_tx.send(format!(
+                "Package downloaded and verified: {}",
+                pkg_path.display()
+            ));
+
+            let plan = match extract_pkg_and_find_installer(&pkg_path) {
+                Ok(plan) => plan,
+                Err(e) => {
+                    let _ = ot_tx.send(format!("Unable to extract package: {e:#}"));
+                    let _ = stat_tx.send(ViewState::Main);
+                    return;
+                }
+            };
+
+            let _ = lp_tx.send(0.85);
+            let _ = ot_tx.send(format!(
+                "Launching installer: {}",
+                plan.installer_path.display()
+            ));
+            if let Err(e) = launch_installer(&plan.installer_path) {
+                let _ = ot_tx.send(format!("Unable to launch installer: {e:#}"));
+                let _ = stat_tx.send(ViewState::Main);
+                return;
+            }
+
+            let _ = lp_tx.send(1.0);
+            let _ = ot_tx.send(
+                "Update installer launched. Closing PDES so the update can complete.".to_string(),
+            );
+            let _ = ui_tx.send(UiEvent::ExitRequested);
+        });
+    }
+
+    fn update_splash(&mut self, ctx: &egui::Context) {
+        self.ensure_updater(false);
+
+        let state = self.update_state.clone();
+        match state {
+            UpdateCheckState::NotConfigured => {
+                self.splash_status = "Updater not configured; continuing.".to_string();
+                let _ = self.lp_tx.send(1.0);
+                let _ = self.stat_tx.send(ViewState::Main);
+            }
+            UpdateCheckState::Checking => {
+                self.splash_status = "Checking for updates...".to_string();
+                let _ = self.lp_tx.send(0.2);
+                ctx.request_repaint();
+            }
+            UpdateCheckState::UpToDate => {
+                self.splash_status = "Up to date.".to_string();
+                let _ = self.lp_tx.send(1.0);
+                let _ = self.stat_tx.send(ViewState::Main);
+            }
+            UpdateCheckState::Error(e) => {
+                self.splash_status = format!("Update check failed; continuing. ({})", e);
+                let _ = self.lp_tx.send(1.0);
+                let _ = self.stat_tx.send(ViewState::Main);
+            }
+            UpdateCheckState::UpdateAvailable(result) => {
+                let current_version = env!("CARGO_PKG_VERSION");
+                let app_update = result
+                    .app
+                    .as_ref()
+                    .is_some_and(|a| updater::is_newer_version(current_version, &a.latest_version));
+
+                if !app_update {
+                    self.splash_status = "No app update; continuing.".to_string();
+                    let _ = self.lp_tx.send(1.0);
+                    let _ = self.stat_tx.send(ViewState::Main);
+                    return;
+                }
+
+                let Some(app) = result.app else {
+                    self.splash_status =
+                        "Update metadata missing app payload; continuing.".to_string();
+                    let _ = self.lp_tx.send(1.0);
+                    let _ = self.stat_tx.send(ViewState::Main);
+                    return;
+                };
+
+                let Some(url) = app.download_url else {
+                    self.splash_status =
+                        "Update metadata missing download URL; continuing.".to_string();
+                    let _ = self.lp_tx.send(1.0);
+                    let _ = self.stat_tx.send(ViewState::Main);
+                    return;
+                };
+                let Some(expected_sha) = app.sha256 else {
+                    self.splash_status = "Update metadata missing sha256; continuing.".to_string();
+                    let _ = self.lp_tx.send(1.0);
+                    let _ = self.stat_tx.send(ViewState::Main);
+                    return;
+                };
+                let Some(token) = self.effective_update_token() else {
+                    self.splash_status = "Updater token missing; continuing.".to_string();
+                    let _ = self.lp_tx.send(1.0);
+                    let _ = self.stat_tx.send(ViewState::Main);
+                    return;
+                };
+
+                self.splash_status = format!(
+                    "Update available: {} → {}",
+                    current_version, app.latest_version
+                );
+                self.start_app_update_install(url, token, expected_sha);
+                ctx.request_repaint();
+            }
+        }
     }
 
     fn effective_update_token(&mut self) -> Option<String> {
@@ -437,29 +578,6 @@ impl FWUpdater {
             probes,
             probe_error: None,
         };
-    }
-
-    // Simulate loading or perform actual loading tasks here
-    /// Kick off installer/bootstrap work while updating the splash progress bar.
-    fn update_progress_bar(
-        &mut self,
-        stat_tx: Sender<ViewState>,
-        lp_tx: Sender<f32>,
-        ctx: egui::Context,
-    ) {
-        let prog = *self.load_progress.clone().lock().unwrap();
-        if prog < 1.0 {
-            let new_prog = (prog + 0.05).min(1.0);
-            let _ = lp_tx.send(new_prog);
-            if new_prog >= 1.0 {
-                let _ = stat_tx.send(ViewState::Main);
-            }
-            ctx.request_repaint();
-        } else {
-            let _ = lp_tx.send(0.0);
-            let _ = stat_tx.send(ViewState::Main); // Transition to main app
-            ctx.request_repaint();
-        }
     }
 
     /// Start flashing operation, dispatching to probe or USB depending on flash vector.
@@ -636,6 +754,9 @@ impl App for FWUpdater {
         if let Ok(response) = self.ot_rx.try_recv() {
             self.console.write(response.as_str());
             self.last_output = Instant::now();
+            if matches!(*self.state.lock().unwrap(), ViewState::Splash) {
+                self.splash_status = response;
+            }
         }
         if let Ok(response) = self.result_rx.try_recv() {
             self.pending_result = Some(response);
@@ -701,7 +822,15 @@ impl App for FWUpdater {
                     self.console.write(&retry_msg);
                     self.update_state = UpdateCheckState::Error(msg);
                 }
+                UiEvent::ExitRequested => {
+                    self.exit_requested = true;
+                }
             }
+        }
+
+        if self.exit_requested {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
         }
 
         // Delay showing the result popup until console output has settled briefly
@@ -716,19 +845,19 @@ impl App for FWUpdater {
                             "../assets/pdes_tx_logo.png"
                         )));
                         ui.add_space(20.0);
+                        self.update_splash(ctx);
                         ui.add(
                             egui::ProgressBar::new(*self.load_progress.lock().unwrap())
-                                .show_percentage(),
+                                .show_percentage()
+                                .animate(true),
                         );
                         ui.add_space(20.0);
+                        ui.label(&self.splash_status);
                     });
-
-                    self.update_progress_bar(self.stat_tx.clone(), self.lp_tx.clone(), ctx.clone());
                 });
             }
             ViewState::Main => {
                 self.ensure_preflight();
-                self.ensure_updater();
                 TopBottomPanel::top("controls_panel")
                     .resizable(true)
                     .default_height(UI_CONTROLS_DEFAULT_HEIGHT)
@@ -799,6 +928,10 @@ impl App for FWUpdater {
                                                 self.flasher.lock().unwrap().refresh_devices();
                                                 self.refresh_preflight();
                                             }
+                                            if ui.button("Updater token").clicked() {
+                                                self.token_prompt_open = true;
+                                                self.token_prompt_dismissed = false;
+                                            }
                                         });
 
                                         ui.collapsing("Details", |ui| {
@@ -814,220 +947,6 @@ impl App for FWUpdater {
                                                 for p in &self.preflight.probes {
                                                     ui.monospace(p);
                                                 }
-                                            }
-                                        });
-                                    });
-
-                                egui::CollapsingHeader::new("Updates")
-                                    .default_open(false)
-                                    .show(ui, |ui| {
-                                        ui.horizontal_wrapped(|ui| {
-                                            ui.label("Status:");
-                                            match &self.update_state {
-                                                UpdateCheckState::NotConfigured => {
-                                                    ui.colored_label(
-                                                        Color32::YELLOW,
-                                                        "Token not set",
-                                                    );
-                                                }
-                                                UpdateCheckState::Checking => {
-                                                    ui.label("Checking...");
-                                                }
-                                                UpdateCheckState::UpToDate => {
-                                                    ui.colored_label(Color32::GREEN, "Up to date");
-                                                }
-                                                UpdateCheckState::UpdateAvailable(result) => {
-                                                    ui.colored_label(
-                                                        Color32::YELLOW,
-                                                        "Update available",
-                                                    );
-                                                    if let Some(app) = &result.app {
-                                                        ui.separator();
-                                                        ui.horizontal_wrapped(|ui| {
-                                                            ui.label("App:");
-                                                            ui.monospace(format!(
-                                                                "{} → {}",
-                                                                env!("CARGO_PKG_VERSION"),
-                                                                app.latest_version
-                                                            ));
-                                                        });
-                                                        if ui
-                                                            .add_enabled(
-                                                                app.download_url.is_some(),
-                                                                egui::Button::new(
-                                                                    "Install app update",
-                                                                ),
-                                                            )
-                                                            .clicked()
-                                                            && let Some(url) =
-                                                                app.download_url.clone()
-                                                        {
-                                                            let Some(token) =
-                                                                self.settings.update_token.clone()
-                                                            else {
-                                                                self.console
-                                                                    .write("Updater token not set.");
-                                                                return;
-                                                            };
-                                                            let Some(expected_sha) =
-                                                                app.sha256.clone()
-                                                            else {
-                                                                self.console.write(
-                                                                    "Update metadata missing pkg_sha256; cannot verify download.",
-                                                                );
-                                                                return;
-                                                            };
-
-                                                            let ot_tx = self.ot_tx.clone();
-                                                            self.console.write(
-                                                                "Downloading package...",
-                                                            );
-                                                            std::thread::spawn(move || {
-                                                                let pkg_path = match download_app_pkg_to_staging_verified(
-                                                                    &url,
-                                                                    &token,
-                                                                    &expected_sha,
-                                                                ) {
-                                                                    Ok(path) => path,
-                                                                    Err(e) => {
-                                                                        let _ = ot_tx.send(format!(
-                                                                            "Package download failed: {e}"
-                                                                        ));
-                                                                        return;
-                                                                    }
-                                                                };
-                                                                let _ = ot_tx.send(format!(
-                                                                    "Package downloaded and verified: {}",
-                                                                    pkg_path.display()
-                                                                ));
-
-                                                                let plan =
-                                                                    match extract_pkg_and_find_installer(&pkg_path) {
-                                                                        Ok(plan) => plan,
-                                                                        Err(e) => {
-                                                                            let _ = ot_tx.send(
-                                                                                format!(
-                                                                                    "Unable to extract package: {e}"
-                                                                                ),
-                                                                            );
-                                                                            return;
-                                                                        }
-                                                                    };
-                                                                let _ = ot_tx.send(format!(
-                                                                    "Launching installer: {}",
-                                                                    plan.installer_path.display()
-                                                                ));
-                                                                if let Err(e) = launch_installer(
-                                                                    &plan.installer_path,
-                                                                ) {
-                                                                    let _ = ot_tx.send(format!(
-                                                                        "Unable to launch installer: {e}"
-                                                                    ));
-                                                                } else {
-                                                                    let _ = ot_tx.send(
-                                                                        "Installer launched. Close and re-open PDES after the update completes."
-                                                                            .to_string(),
-                                                                    );
-                                                                }
-                                                            });
-                                                        }
-                                                        if let Some(notes) = &app.notes {
-                                                            ui.collapsing("Notes", |ui| {
-                                                                ui.label(notes);
-                                                            });
-                                                        }
-                                                    }
-
-                                                    if let Some(fw) = &result.firmware {
-                                                        ui.separator();
-                                                        ui.horizontal_wrapped(|ui| {
-                                                            ui.label("Firmware:");
-                                                            ui.monospace(&fw.latest_version);
-                                                        });
-                                                        if ui
-                                                            .add_enabled(
-                                                                fw.download_url.is_some(),
-                                                                egui::Button::new(
-                                                                    "Download firmware update",
-                                                                ),
-                                                            )
-                                                            .clicked()
-                                                            && let Some(url) =
-                                                                fw.download_url.clone()
-                                                        {
-                                                            let Some(token) =
-                                                                self.settings.update_token.clone()
-                                                            else {
-                                                                self.console
-                                                                    .write("Updater token not set.");
-                                                                return;
-                                                            };
-                                                            let Some(expected_sha) =
-                                                                fw.sha256.clone()
-                                                            else {
-                                                                self.console.write(
-                                                                    "Update metadata missing sha256; cannot verify download.",
-                                                                );
-                                                                return;
-                                                            };
-
-                                                            let ot_tx = self.ot_tx.clone();
-                                                            let ui_tx = self.ui_tx.clone();
-                                                            self.console.write(
-                                                                "Downloading firmware...",
-                                                            );
-                                                            std::thread::spawn(move || {
-                                                                match download_to_app_firmware_verified(
-                                                                    &url,
-                                                                    &token,
-                                                                    &expected_sha,
-                                                                ) {
-                                                                    Ok(path) => {
-                                                                        let _ = ot_tx.send(
-                                                                            format!(
-                                                                                "Downloaded firmware to {}",
-                                                                                path.display()
-                                                                            ),
-                                                                        );
-                                                                        let _ = ui_tx.send(
-                                                                            UiEvent::SetFirmwarePath(
-                                                                                path,
-                                                                            ),
-                                                                        );
-                                                                    }
-                                                                    Err(e) => {
-                                                                        let _ = ot_tx.send(
-                                                                            format!(
-                                                                                "Firmware download failed: {e}"
-                                                                            ),
-                                                                        );
-                                                                    }
-                                                                }
-                                                            });
-                                                        }
-                                                        if let Some(notes) = &fw.notes {
-                                                            ui.collapsing("Notes", |ui| {
-                                                                ui.label(notes);
-                                                            });
-                                                        }
-                                                    }
-                                                }
-                                                UpdateCheckState::Error(e) => {
-                                                    ui.colored_label(Color32::RED, e);
-                                                }
-                                            }
-                                        });
-
-                                        ui.horizontal(|ui| {
-                                            if ui.button("Set token").clicked() {
-                                                self.token_prompt_open = true;
-                                                self.token_prompt_dismissed = false;
-                                            }
-                                            if ui.button("Check now").clicked() {
-                                                self.update_check_started = false;
-                                                self.bootstrap_retry_at = None;
-                                                self.bootstrap_failures = 0;
-                                                self.ensure_updater();
                                             }
                                         });
                                     });
@@ -1080,65 +999,69 @@ impl App for FWUpdater {
 
                                 ui.add_space(5.0);
 
-                                let mut flasher = self.flasher.lock().unwrap();
-                                match flasher.flash_vector {
-                                    FlashVector::Usb => {
-                                        ui.horizontal(|ui| {
-                                            ui.add(egui::Label::new("Port: "));
-                                            let selected_port_label =
-                                                if flasher.selected_port.is_empty() {
-                                                    if cfg!(windows) {
-                                                        "No COM ports found".to_string()
+                                {
+                                    let mut flasher = self.flasher.lock().unwrap();
+                                    match flasher.flash_vector {
+                                        FlashVector::Usb => {
+                                            ui.horizontal(|ui| {
+                                                ui.add(egui::Label::new("Port: "));
+                                                let selected_port_label =
+                                                    if flasher.selected_port.is_empty() {
+                                                        if cfg!(windows) {
+                                                            "No COM ports found".to_string()
+                                                        } else {
+                                                            "No serial ports found".to_string()
+                                                        }
                                                     } else {
-                                                        "No serial ports found".to_string()
-                                                    }
-                                                } else {
-                                                    flasher.selected_port.clone()
-                                                };
+                                                        flasher.selected_port.clone()
+                                                    };
 
-                                            let port_keys: Vec<String> =
-                                                flasher.ports.keys().cloned().collect();
-                                            egui::ComboBox::from_id_salt("serial_port")
-                                                .selected_text(selected_port_label)
-                                                .width(ui.available_width() / 3.0)
-                                                .show_ui(ui, |ui| {
-                                                    for k in port_keys {
-                                                        ui.selectable_value(
-                                                            &mut flasher.selected_port,
-                                                            k.clone(),
-                                                            k,
-                                                        );
-                                                    }
-                                                });
-                                        });
-                                    }
-                                    FlashVector::Probe => {
-                                        ui.horizontal(|ui| {
-                                            ui.add(egui::Label::new("Probe: "));
-                                            let probe_labels: Vec<String> = flasher
-                                                .probes
-                                                .iter()
-                                                .map(|p| p.identifier.clone())
-                                                .collect();
-                                            let selected = probe_labels
-                                                .get(flasher.selected_probe_index)
-                                                .cloned()
-                                                .unwrap_or_else(|| "No probe detected".to_string());
-                                            egui::ComboBox::from_id_salt("probe")
-                                                .selected_text(selected)
-                                                .width(ui.available_width() / 2.0)
-                                                .show_ui(ui, |ui| {
-                                                    for (idx, label) in
-                                                        probe_labels.iter().enumerate()
-                                                    {
-                                                        ui.selectable_value(
-                                                            &mut flasher.selected_probe_index,
-                                                            idx,
-                                                            label,
-                                                        );
-                                                    }
-                                                });
-                                        });
+                                                let port_keys: Vec<String> =
+                                                    flasher.ports.keys().cloned().collect();
+                                                egui::ComboBox::from_id_salt("serial_port")
+                                                    .selected_text(selected_port_label)
+                                                    .width(ui.available_width() / 3.0)
+                                                    .show_ui(ui, |ui| {
+                                                        for k in port_keys {
+                                                            ui.selectable_value(
+                                                                &mut flasher.selected_port,
+                                                                k.clone(),
+                                                                k,
+                                                            );
+                                                        }
+                                                    });
+                                            });
+                                        }
+                                        FlashVector::Probe => {
+                                            ui.horizontal(|ui| {
+                                                ui.add(egui::Label::new("Probe: "));
+                                                let probe_labels: Vec<String> = flasher
+                                                    .probes
+                                                    .iter()
+                                                    .map(|p| p.identifier.clone())
+                                                    .collect();
+                                                let selected = probe_labels
+                                                    .get(flasher.selected_probe_index)
+                                                    .cloned()
+                                                    .unwrap_or_else(|| {
+                                                        "No probe detected".to_string()
+                                                    });
+                                                egui::ComboBox::from_id_salt("probe")
+                                                    .selected_text(selected)
+                                                    .width(ui.available_width() / 2.0)
+                                                    .show_ui(ui, |ui| {
+                                                        for (idx, label) in
+                                                            probe_labels.iter().enumerate()
+                                                        {
+                                                            ui.selectable_value(
+                                                                &mut flasher.selected_probe_index,
+                                                                idx,
+                                                                label,
+                                                            );
+                                                        }
+                                                    });
+                                            });
+                                        }
                                     }
                                 }
 
@@ -1153,6 +1076,48 @@ impl App for FWUpdater {
                                                         {
                                                             self.fd.lock().unwrap().pick_file();
                                                         };
+                                                        if ui.button("Download latest").clicked() {
+                                                            let Some(token) = self.effective_update_token() else {
+                                                                self.console.write("Updater token not set.");
+                                                                self.token_prompt_open = true;
+                                                                self.token_prompt_dismissed = false;
+                                                                return;
+                                                            };
+                                                            let firmware_url = self.update_identity.firmware_latest_url();
+                                                            let package_url = self.update_identity.package_latest_url();
+                                                            let ot_tx = self.ot_tx.clone();
+                                                            let ui_tx = self.ui_tx.clone();
+                                                            self.console.write("Checking firmware update...");
+                                                            std::thread::spawn(move || {
+                                                                let res = updater::check_for_updates(&package_url, &firmware_url, &token);
+                                                                let Ok(result) = res else {
+                                                                    let _ = ot_tx.send("Firmware update check failed.".to_string());
+                                                                    return;
+                                                                };
+                                                                let Some(fw) = result.firmware else {
+                                                                    let _ = ot_tx.send("No firmware update available.".to_string());
+                                                                    return;
+                                                                };
+                                                                let Some(url) = fw.download_url.clone() else {
+                                                                    let _ = ot_tx.send("Firmware update missing download URL.".to_string());
+                                                                    return;
+                                                                };
+                                                                let Some(expected_sha) = fw.sha256.clone() else {
+                                                                    let _ = ot_tx.send("Firmware update missing sha256; cannot verify download.".to_string());
+                                                                    return;
+                                                                };
+                                                                let _ = ot_tx.send("Downloading firmware...".to_string());
+                                                                match download_to_app_firmware_verified(&url, &token, &expected_sha) {
+                                                                    Ok(path) => {
+                                                                        let _ = ot_tx.send(format!("Downloaded firmware to {}", path.display()));
+                                                                        let _ = ui_tx.send(UiEvent::SetFirmwarePath(path));
+                                                                    }
+                                                                    Err(e) => {
+                                                                        let _ = ot_tx.send(format!("Firmware download failed: {e:#}"));
+                                                                    }
+                                                                }
+                                                            });
+                                                        }
                                 });
                             });
                     });
@@ -1186,7 +1151,7 @@ impl App for FWUpdater {
                             ui.label(
                                 RichText::new(format!("v{}", self.app_version))
                                     .size(12.0)
-                                    .color(Color32::LIGHT_GRAY),
+                                    .color(ui.visuals().weak_text_color()),
                             );
                         });
                     });
@@ -1273,7 +1238,7 @@ impl App for FWUpdater {
                                     self.token_prompt_open = false;
                                     self.token_prompt_dismissed = false;
                                     self.update_check_started = false;
-                                    self.ensure_updater();
+                                    self.ensure_updater(false);
                                 }
                                 Err(e) => {
                                     self.console.write(
