@@ -206,17 +206,15 @@ jobs:
           set -euo pipefail
           chmod +x scripts/build_pkg.sh
 
-          version="$(
-            python3 - <<'PY'
-            import re
-            from pathlib import Path
-            data = Path("Cargo.toml").read_text(encoding="utf-8")
-            m = re.search(r'(?ms)^\\[package\\][\\s\\S]*?^version\\s*=\\s*\"([^\"]+)\"', data)
-            if not m:
-              raise SystemExit("Unable to read [package].version from Cargo.toml")
-            print(m.group(1))
-            PY
-          )"
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="$(python3 -c 'import re; from pathlib import Path; data=Path("Cargo.toml").read_text(encoding="utf-8"); m=re.search(r"(?ms)^\\[package\\][\\s\\S]*?^version\\s*=\\s*\\\"([^\\\"]+)\\\"", data); print(m.group(1) if m else "")')"
+          fi
+          if [[ -z "$version" ]]; then
+            echo "Unable to determine version for .pkg build" >&2
+            exit 1
+          fi
 
           slug="${PDES_APP_SLUG:-}"
           if [[ -z "$slug" ]]; then
