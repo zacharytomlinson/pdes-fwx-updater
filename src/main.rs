@@ -1036,253 +1036,222 @@ impl App for FWUpdater {
                                     avail_rect.center(),
                                     Vec2::new(width, avail_rect.height()),
                                 );
-                                ui.scope_builder(egui::UiBuilder::new().max_rect(column_rect), |ui| {
-                                    ui.set_width(width);
+                                ui.scope_builder(
+                                    egui::UiBuilder::new().max_rect(column_rect),
+                                    |ui| {
+                                        ui.set_width(width);
 
-                                    ui.vertical_centered(|ui| {
-                                        ui.add(
-                                            egui::Image::new(egui::include_image!(
-                                                "../assets/pdes_tx_logo.png"
-                                            ))
-                                            .fit_to_original_size(1.0)
-                                            .max_size(Vec2::new(width, UI_LOGO_MAX_HEIGHT)),
-                                        );
-                                    });
-                                    ui.add_space(15.0);
-
-                                                egui::CollapsingHeader::new("Pre-flight")
-                                                    .default_open(self.preflight_open)
-                                                    .show(ui, |ui| {
-                                                        ui.horizontal_wrapped(|ui| {
-                                                            let (label, color) = if self
-                                                                .preflight
-                                                                .bossac_bundled
-                                                            {
-                                                                ("OK", Color32::GREEN)
-                                                            } else if self.preflight.bossac_from_path {
-                                                                ("PATH", Color32::YELLOW)
-                                                            } else {
-                                                                ("MISSING", Color32::RED)
-                                                            };
-                                                            ui.label("BOSSAC:");
-                                                            ui.colored_label(color, label);
-                                                            ui.monospace(&self.preflight.bossac_path);
-                                                        });
-
-                                        ui.horizontal_wrapped(|ui| {
-                                            ui.label("USB ports:");
-                                            ui.monospace(
-                                                self.preflight.serial_ports.len().to_string(),
+                                        ui.vertical_centered(|ui| {
+                                            ui.add(
+                                                egui::Image::new(egui::include_image!(
+                                                    "../assets/pdes_tx_logo.png"
+                                                ))
+                                                .fit_to_original_size(1.0)
+                                                .max_size(Vec2::new(width, UI_LOGO_MAX_HEIGHT)),
                                             );
-                                            if let Some(err) = &self.preflight.serial_error {
-                                                ui.colored_label(Color32::YELLOW, err);
-                                            }
                                         });
+                                        ui.add_space(15.0);
 
-                                        ui.horizontal_wrapped(|ui| {
-                                            ui.label("Probes:");
-                                            ui.monospace(self.preflight.probes.len().to_string());
-                                            if let Some(err) = &self.preflight.probe_error {
-                                                ui.colored_label(Color32::YELLOW, err);
-                                            }
-                                        });
+                                        egui::CollapsingHeader::new("Pre-flight")
+                                            .default_open(self.preflight_open)
+                                            .show(ui, |ui| {
+                                                ui.horizontal_wrapped(|ui| {
+                                                    let (label, color) =
+                                                        if self.preflight.bossac_bundled {
+                                                            ("OK", Color32::GREEN)
+                                                        } else if self.preflight.bossac_from_path {
+                                                            ("PATH", Color32::YELLOW)
+                                                        } else {
+                                                            ("MISSING", Color32::RED)
+                                                        };
+                                                    ui.label("BOSSAC:");
+                                                    ui.colored_label(color, label);
+                                                    ui.monospace(&self.preflight.bossac_path);
+                                                });
+
+                                                ui.horizontal_wrapped(|ui| {
+                                                    ui.label("USB ports:");
+                                                    ui.monospace(
+                                                        self.preflight
+                                                            .serial_ports
+                                                            .len()
+                                                            .to_string(),
+                                                    );
+                                                    if let Some(err) = &self.preflight.serial_error
+                                                    {
+                                                        ui.colored_label(Color32::YELLOW, err);
+                                                    }
+                                                });
+
+                                                ui.horizontal_wrapped(|ui| {
+                                                    ui.label("Probes:");
+                                                    ui.monospace(
+                                                        self.preflight.probes.len().to_string(),
+                                                    );
+                                                    if let Some(err) = &self.preflight.probe_error {
+                                                        ui.colored_label(Color32::YELLOW, err);
+                                                    }
+                                                });
+
+                                                ui.horizontal(|ui| {
+                                                    if ui.button("Refresh").clicked() {
+                                                        self.flasher
+                                                            .lock()
+                                                            .unwrap()
+                                                            .refresh_devices();
+                                                        self.refresh_preflight();
+                                                    }
+                                                    if ui.button("Updater token").clicked() {
+                                                        self.token_prompt_open = true;
+                                                        self.token_prompt_dismissed = false;
+                                                    }
+                                                });
+
+                                                ui.collapsing("Details", |ui| {
+                                                    if !self.preflight.serial_ports.is_empty() {
+                                                        ui.label("Serial ports:");
+                                                        for p in &self.preflight.serial_ports {
+                                                            ui.monospace(p);
+                                                        }
+                                                        ui.add_space(5.0);
+                                                    }
+                                                    if !self.preflight.probes.is_empty() {
+                                                        ui.label("Debug probes:");
+                                                        for p in &self.preflight.probes {
+                                                            ui.monospace(p);
+                                                        }
+                                                    }
+                                                });
+                                            });
 
                                         ui.horizontal(|ui| {
-                                            if ui.button("Refresh").clicked() {
-                                                self.flasher.lock().unwrap().refresh_devices();
-                                                self.refresh_preflight();
-                                            }
-                                            if ui.button("Updater token").clicked() {
-                                                self.token_prompt_open = true;
-                                                self.token_prompt_dismissed = false;
-                                            }
+                                            ui.add(egui::Label::new("Target: "));
+                                            let mut flasher = self.flasher.lock().unwrap();
+                                            egui::ComboBox::from_label("")
+                                                .selected_text(format!("{:?}", flasher.chip))
+                                                .width(ui.available_width() / 3.0)
+                                                .show_ui(ui, |ui| {
+                                                    ui.selectable_value(
+                                                        &mut flasher.chip,
+                                                        ChipModel::ATSAMD21G18A,
+                                                        "ATSAMD21",
+                                                    );
+                                                    ui.selectable_value(
+                                                        &mut flasher.chip,
+                                                        ChipModel::STM32F103C8,
+                                                        "STM32F2",
+                                                    );
+                                                });
                                         });
 
-                                        ui.collapsing("Details", |ui| {
-                                            if !self.preflight.serial_ports.is_empty() {
-                                                ui.label("Serial ports:");
-                                                for p in &self.preflight.serial_ports {
-                                                    ui.monospace(p);
-                                                }
-                                                ui.add_space(5.0);
-                                            }
-                                            if !self.preflight.probes.is_empty() {
-                                                ui.label("Debug probes:");
-                                                for p in &self.preflight.probes {
-                                                    ui.monospace(p);
-                                                }
-                                            }
+                                        ui.add_space(5.0);
+
+                                        ui.horizontal(|ui| {
+                                            ui.add(egui::Label::new("Method: "));
+                                            let mut flasher = self.flasher.lock().unwrap();
+                                            let selected_method = match flasher.flash_vector {
+                                                FlashVector::Usb => "USB (COM)",
+                                                FlashVector::Probe => "Probe (CMSIS-DAP)",
+                                            };
+                                            egui::ComboBox::from_id_salt("flash_method")
+                                                .selected_text(selected_method)
+                                                .width(ui.available_width() / 3.0)
+                                                .show_ui(ui, |ui| {
+                                                    ui.selectable_value(
+                                                        &mut flasher.flash_vector,
+                                                        FlashVector::Usb,
+                                                        "USB (COM)",
+                                                    );
+                                                    ui.selectable_value(
+                                                        &mut flasher.flash_vector,
+                                                        FlashVector::Probe,
+                                                        "Probe (CMSIS-DAP)",
+                                                    );
+                                                });
                                         });
-                                    });
 
-                                ui.horizontal(|ui| {
-                                    ui.add(egui::Label::new("Target: "));
-                                    let mut flasher = self.flasher.lock().unwrap();
-                                    egui::ComboBox::from_label("")
-                                        .selected_text(format!("{:?}", flasher.chip))
-                                        .width(ui.available_width() / 3.0)
-                                        .show_ui(ui, |ui| {
-                                            ui.selectable_value(
-                                                &mut flasher.chip,
-                                                ChipModel::ATSAMD21G18A,
-                                                "ATSAMD21",
-                                            );
-                                            ui.selectable_value(
-                                                &mut flasher.chip,
-                                                ChipModel::STM32F103C8,
-                                                "STM32F2",
-                                            );
-                                        });
-                                });
+                                        ui.add_space(5.0);
 
-                                ui.add_space(5.0);
-
-                                ui.horizontal(|ui| {
-                                    ui.add(egui::Label::new("Method: "));
-                                    let mut flasher = self.flasher.lock().unwrap();
-                                    let selected_method = match flasher.flash_vector {
-                                        FlashVector::Usb => "USB (COM)",
-                                        FlashVector::Probe => "Probe (CMSIS-DAP)",
-                                    };
-                                    egui::ComboBox::from_id_salt("flash_method")
-                                        .selected_text(selected_method)
-                                        .width(ui.available_width() / 3.0)
-                                        .show_ui(ui, |ui| {
-                                            ui.selectable_value(
-                                                &mut flasher.flash_vector,
-                                                FlashVector::Usb,
-                                                "USB (COM)",
-                                            );
-                                            ui.selectable_value(
-                                                &mut flasher.flash_vector,
-                                                FlashVector::Probe,
-                                                "Probe (CMSIS-DAP)",
-                                            );
-                                        });
-                                });
-
-                                ui.add_space(5.0);
-
-                                {
-                                    let mut flasher = self.flasher.lock().unwrap();
-                                    match flasher.flash_vector {
-                                        FlashVector::Usb => {
-                                            ui.horizontal(|ui| {
-                                                ui.add(egui::Label::new("Port: "));
-                                                let selected_port_label =
-                                                    if flasher.selected_port.is_empty() {
-                                                        if cfg!(windows) {
-                                                            "No COM ports found".to_string()
-                                                        } else {
-                                                            "No serial ports found".to_string()
-                                                        }
-                                                    } else {
-                                                        flasher.selected_port.clone()
-                                                    };
-
-                                                let port_keys: Vec<String> =
-                                                    flasher.ports.keys().cloned().collect();
-                                                egui::ComboBox::from_id_salt("serial_port")
-                                                    .selected_text(selected_port_label)
-                                                    .width(ui.available_width() / 3.0)
-                                                    .show_ui(ui, |ui| {
-                                                        for k in port_keys {
-                                                            ui.selectable_value(
-                                                                &mut flasher.selected_port,
-                                                                k.clone(),
-                                                                k,
-                                                            );
-                                                        }
-                                                    });
-                                            });
-                                        }
-                                        FlashVector::Probe => {
-                                            ui.horizontal(|ui| {
-                                                ui.add(egui::Label::new("Probe: "));
-                                                let probe_labels: Vec<String> = flasher
-                                                    .probes
-                                                    .iter()
-                                                    .map(|p| p.identifier.clone())
-                                                    .collect();
-                                                let selected = probe_labels
-                                                    .get(flasher.selected_probe_index)
-                                                    .cloned()
-                                                    .unwrap_or_else(|| {
-                                                        "No probe detected".to_string()
-                                                    });
-                                                egui::ComboBox::from_id_salt("probe")
-                                                    .selected_text(selected)
-                                                    .width(ui.available_width() / 2.0)
-                                                    .show_ui(ui, |ui| {
-                                                        for (idx, label) in
-                                                            probe_labels.iter().enumerate()
-                                                        {
-                                                            ui.selectable_value(
-                                                                &mut flasher.selected_probe_index,
-                                                                idx,
-                                                                label,
-                                                            );
-                                                        }
-                                                    });
-                                            });
-                                        }
-                                    }
-                                }
-
-                                                        if ui
-                                                            .add(
-                                                                egui::TextEdit::singleline(
-                                                                    &mut self.fd_text,
-                                                                )
-                                                                .clip_text(false),
-                                                            )
-                                                                .clicked()
-                                                        {
-                                                            self.fd.lock().unwrap().pick_file();
-                                                        };
-                                                        if ui.button("Download latest").clicked() {
-                                                            let Some(token) = self.effective_update_token() else {
-                                                                self.console.write("Updater token not set.");
-                                                                self.token_prompt_open = true;
-                                                                self.token_prompt_dismissed = false;
-                                                                return;
+                                        {
+                                            let mut flasher = self.flasher.lock().unwrap();
+                                            match flasher.flash_vector {
+                                                FlashVector::Usb => {
+                                                    ui.horizontal(|ui| {
+                                                        ui.add(egui::Label::new("Port: "));
+                                                        let selected_port_label =
+                                                            if flasher.selected_port.is_empty() {
+                                                                if cfg!(windows) {
+                                                                    "No COM ports found".to_string()
+                                                                } else {
+                                                                    "No serial ports found"
+                                                                        .to_string()
+                                                                }
+                                                            } else {
+                                                                flasher.selected_port.clone()
                                                             };
-                                                            let firmware_url = self.update_identity.firmware_latest_url();
-                                                            let package_url = self.update_identity.package_latest_url();
-                                                            let ot_tx = self.ot_tx.clone();
-                                                            let ui_tx = self.ui_tx.clone();
-                                                            self.console.write("Checking firmware update...");
-                                                            std::thread::spawn(move || {
-                                                                let res = updater::check_for_updates(&package_url, &firmware_url, &token);
-                                                                let Ok(result) = res else {
-                                                                    let _ = ot_tx.send("Firmware update check failed.".to_string());
-                                                                    return;
-                                                                };
-                                                                let Some(fw) = result.firmware else {
-                                                                    let _ = ot_tx.send("No firmware update available.".to_string());
-                                                                    return;
-                                                                };
-                                                                let Some(url) = fw.download_url.clone() else {
-                                                                    let _ = ot_tx.send("Firmware update missing download URL.".to_string());
-                                                                    return;
-                                                                };
-                                                                let Some(expected_sha) = fw.sha256.clone() else {
-                                                                    let _ = ot_tx.send("Firmware update missing sha256; cannot verify download.".to_string());
-                                                                    return;
-                                                                };
-                                                                let _ = ot_tx.send("Downloading firmware...".to_string());
-                                                                match download_to_app_firmware_verified(&url, &token, &expected_sha) {
-                                                                    Ok(path) => {
-                                                                        let _ = ot_tx.send(format!("Downloaded firmware to {}", path.display()));
-                                                                        let _ = ui_tx.send(UiEvent::SetFirmwarePath(path));
-                                                                    }
-                                                                    Err(e) => {
-                                                                        let _ = ot_tx.send(format!("Firmware download failed: {e:#}"));
-                                                                    }
+
+                                                        let port_keys: Vec<String> =
+                                                            flasher.ports.keys().cloned().collect();
+                                                        egui::ComboBox::from_id_salt("serial_port")
+                                                            .selected_text(selected_port_label)
+                                                            .width(ui.available_width() / 3.0)
+                                                            .show_ui(ui, |ui| {
+                                                                for k in port_keys {
+                                                                    ui.selectable_value(
+                                                                        &mut flasher.selected_port,
+                                                                        k.clone(),
+                                                                        k,
+                                                                    );
                                                                 }
                                                             });
-                                                        }
-                                });
+                                                    });
+                                                }
+                                                FlashVector::Probe => {
+                                                    ui.horizontal(|ui| {
+                                                        ui.add(egui::Label::new("Probe: "));
+                                                        let probe_labels: Vec<String> = flasher
+                                                            .probes
+                                                            .iter()
+                                                            .map(|p| p.identifier.clone())
+                                                            .collect();
+                                                        let selected = probe_labels
+                                                            .get(flasher.selected_probe_index)
+                                                            .cloned()
+                                                            .unwrap_or_else(|| {
+                                                                "No probe detected".to_string()
+                                                            });
+                                                        egui::ComboBox::from_id_salt("probe")
+                                                            .selected_text(selected)
+                                                            .width(ui.available_width() / 2.0)
+                                                            .show_ui(ui, |ui| {
+                                                                for (idx, label) in
+                                                                    probe_labels.iter().enumerate()
+                                                                {
+                                                                    ui.selectable_value(
+                                                                        &mut flasher
+                                                                            .selected_probe_index,
+                                                                        idx,
+                                                                        label,
+                                                                    );
+                                                                }
+                                                            });
+                                                    });
+                                                }
+                                            }
+                                        }
+
+                                        if ui
+                                            .add(
+                                                egui::TextEdit::singleline(&mut self.fd_text)
+                                                    .clip_text(false),
+                                            )
+                                            .clicked()
+                                        {
+                                            self.fd.lock().unwrap().pick_file();
+                                        };
+                                        // Firmware is auto-cached and selected on startup.
+                                    },
+                                );
                             });
                     });
 
@@ -1331,11 +1300,52 @@ impl App for FWUpdater {
                                 UpdateCheckState::Error(_) => Color32::from_rgb(255, 90, 90),
                                 _ => ui.visuals().weak_text_color(),
                             };
-                            ui.label(
-                                RichText::new(format!("v{}", self.app_version))
-                                    .size(12.0)
-                                    .color(version_color),
-                            );
+
+                            let fw_version = self
+                                .last_update_result
+                                .as_ref()
+                                .and_then(|r| r.firmware.as_ref())
+                                .map(|f| f.latest_version.trim().to_string())
+                                .filter(|s| !s.is_empty())
+                                .unwrap_or_else(|| "—".to_string());
+
+                            ui.horizontal(|ui| {
+                                let half = ui.available_width() / 2.0;
+
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(half, 0.0),
+                                    egui::Layout::left_to_right(egui::Align::Center),
+                                    |ui| {
+                                        ui.label(
+                                            RichText::new("App Version:")
+                                                .size(12.0)
+                                                .color(ui.visuals().text_color()),
+                                        );
+                                        ui.label(
+                                            RichText::new(format!("v{}", self.app_version))
+                                                .size(12.0)
+                                                .color(version_color),
+                                        );
+                                    },
+                                );
+
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(half, 0.0),
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        ui.label(
+                                            RichText::new(format!("v{fw_version}"))
+                                                .size(12.0)
+                                                .color(version_color),
+                                        );
+                                        ui.label(
+                                            RichText::new("Firmware Version:")
+                                                .size(12.0)
+                                                .color(ui.visuals().text_color()),
+                                        );
+                                    },
+                                );
+                            });
                         });
                     });
 
