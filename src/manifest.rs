@@ -85,27 +85,49 @@ impl UpdateIdentity {
 
     pub fn package_latest_url(&self) -> String {
         let target = format!("{}:{}", self.os, self.arch);
+        let base = self.api_base_url.trim_end_matches('/');
         format!(
             "{}/apps/{}/package/latest?os={}&arch={}&target={}",
-            &self.api_base_url, self.slug, self.os, self.arch, target
+            base, self.slug, self.os, self.arch, target
         )
     }
 
     pub fn firmware_latest_url(&self) -> String {
         if let Some(url) = &self.firmware_latest_url {
-            if url.starts_with("http://") || url.starts_with("https://") {
-                return url.to_string();
-            }
-            if url.starts_with('/') {
-                return format!("{}{}", &self.api_base_url, url);
-            }
-            return format!("{}/{}", &self.api_base_url, url);
+            return join_api_url(&self.api_base_url, url);
         }
         let target = format!("{}:{}", self.os, self.arch);
+        let base = self.api_base_url.trim_end_matches('/');
         format!(
             "{}/apps/{}/firmware/latest?channel={}&os={}&arch={}&target={}",
-            &self.api_base_url, self.slug, self.firmware_channel, self.os, self.arch, target
+            base, self.slug, self.firmware_channel, self.os, self.arch, target
         )
+    }
+}
+
+fn join_api_url(base: &str, path: &str) -> String {
+    let base = base.trim_end_matches('/');
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return base.to_string();
+    }
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        return trimmed.to_string();
+    }
+
+    let owned = (!trimmed.starts_with('/')).then(|| format!("/{trimmed}"));
+    let path = owned.as_deref().unwrap_or(trimmed);
+
+    let path = if base.ends_with("/api") && (path == "/api" || path.starts_with("/api/")) {
+        &path["/api".len()..]
+    } else {
+        path
+    };
+
+    if path.is_empty() {
+        base.to_string()
+    } else {
+        format!("{base}{path}")
     }
 }
 
@@ -249,4 +271,37 @@ fn default_api_base_url() -> String {
         .ok()
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| "https://apps.palodurosystems.io/api".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::join_api_url;
+
+    #[test]
+    fn join_api_url_dedupes_api_prefix() {
+        let base = "https://apps.palodurosystems.io/api";
+        assert_eq!(
+            join_api_url(
+                base,
+                "/api/apps/pdes-fwx-updater/firmware/latest?channel=stable"
+            ),
+            "https://apps.palodurosystems.io/api/apps/pdes-fwx-updater/firmware/latest?channel=stable"
+        );
+        assert_eq!(
+            join_api_url(
+                base,
+                "api/apps/pdes-fwx-updater/firmware/latest?channel=stable"
+            ),
+            "https://apps.palodurosystems.io/api/apps/pdes-fwx-updater/firmware/latest?channel=stable"
+        );
+    }
+
+    #[test]
+    fn join_api_url_preserves_non_api_paths() {
+        let base = "https://apps.palodurosystems.io/api/";
+        assert_eq!(
+            join_api_url(base, "/apps/pdes-fwx-updater/package/latest"),
+            "https://apps.palodurosystems.io/api/apps/pdes-fwx-updater/package/latest"
+        );
+    }
 }
