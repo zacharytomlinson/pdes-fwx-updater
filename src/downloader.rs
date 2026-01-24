@@ -4,6 +4,7 @@ use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use std::time::SystemTime;
 
 pub fn download_app_pkg_to_staging_verified(
     url: &str,
@@ -22,6 +23,16 @@ pub fn download_to_app_firmware_verified(
 ) -> anyhow::Result<PathBuf> {
     let firmware_dir = crate::app_dirs::firmware_dir()?;
     download_to_dir_verified(&firmware_dir, url, token, expected_sha256)
+}
+
+pub fn find_cached_firmware_by_sha256(expected_sha256: &str) -> anyhow::Result<Option<PathBuf>> {
+    let firmware_dir = crate::app_dirs::firmware_dir()?;
+    find_file_in_dir_by_sha256(&firmware_dir, expected_sha256)
+}
+
+pub fn find_latest_cached_firmware() -> anyhow::Result<Option<PathBuf>> {
+    let firmware_dir = crate::app_dirs::firmware_dir()?;
+    find_latest_file_in_dir(&firmware_dir)
 }
 
 pub fn download_to_path_verified(
@@ -168,9 +179,91 @@ fn unique_dest_path(initial: &Path) -> PathBuf {
     initial.to_path_buf()
 }
 
+fn sha256_file(path: &Path) -> anyhow::Result<String> {
+    let mut file =
+        File::open(path).with_context(|| format!("Unable to open {}", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer).context("File read failed")?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn find_file_in_dir_by_sha256(
+    dir: &Path,
+    expected_sha256: &str,
+) -> anyhow::Result<Option<PathBuf>> {
+    let expected = expected_sha256.trim().to_ascii_lowercase();
+    if expected.is_empty() {
+        return Ok(None);
+    }
+    if !dir.exists() {
+        return Ok(None);
+    }
+
+    for entry in fs::read_dir(dir).with_context(|| format!("Unable to read {}", dir.display()))? {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        if path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .is_some_and(|s| s.ends_with(".tmp"))
+        {
+            continue;
+        }
+        let got = sha256_file(&path)?;
+        if got == expected {
+            return Ok(Some(path));
+        }
+    }
+
+    Ok(None)
+}
+
+fn find_latest_file_in_dir(dir: &Path) -> anyhow::Result<Option<PathBuf>> {
+    if !dir.exists() {
+        return Ok(None);
+    }
+
+    let mut best: Option<(SystemTime, PathBuf)> = None;
+    for entry in fs::read_dir(dir).with_context(|| format!("Unable to read {}", dir.display()))? {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        if path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .is_some_and(|s| s.ends_with(".tmp"))
+        {
+            continue;
+        }
+        let meta = fs::metadata(&path)?;
+        let mtime = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+        match &best {
+            None => best = Some((mtime, path)),
+            Some((best_time, _)) if mtime > *best_time => best = Some((mtime, path)),
+            _ => {}
+        }
+    }
+    Ok(best.map(|(_, p)| p))
+}
+
 #[cfg(test)]
 mod tests {
     use super::parse_content_disposition_filename;
+    use super::{find_file_in_dir_by_sha256, sha256_file};
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn parses_content_disposition_filename() {
@@ -183,5 +276,18 @@ mod tests {
             Some("bar.msi")
         );
         assert_eq!(parse_content_disposition_filename("attachment"), None);
+    }
+
+    #[test]
+    fn finds_file_by_sha256() {
+        let dir = tempdir().unwrap();
+        let p1 = dir.path().join("one.bin");
+        let p2 = dir.path().join("two.bin");
+        fs::write(&p1, b"hello").unwrap();
+        fs::write(&p2, b"world").unwrap();
+
+        let sha = sha256_file(&p2).unwrap();
+        let found = find_file_in_dir_by_sha256(dir.path(), &sha).unwrap();
+        assert_eq!(found.as_deref(), Some(p2.as_path()));
     }
 }

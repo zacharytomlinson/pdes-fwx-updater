@@ -62,6 +62,42 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libudev-dev pkg-config fakeroot
 
+      - name: Mint bootstrap pkg URL (optional)
+        shell: bash
+        env:
+          PDES_WRITER_API_TOKEN: ${{ secrets.PDES_WRITER_API_TOKEN }}
+          PDES_APP_SLUG: ${{ vars.PDES_APP_SLUG }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${PDES_WRITER_API_TOKEN:-}" ]]; then
+            echo "PDES_WRITER_API_TOKEN not set; skipping bootstrap mint."
+            exit 0
+          fi
+          slug="${PDES_APP_SLUG:-pdes-fwx-updater}"
+          target="linux:x86_64"
+
+          resp="$(mktemp)"
+          curl -fsSL \
+            -H "Authorization: Bearer ${PDES_WRITER_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"app_slug\":\"${slug}\",\"target\":\"${target}\"}" \
+            "https://apps.palodurosystems.io/api/bootstrap/mint" \
+            -o "$resp"
+
+          pkg_url="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1], "r", encoding="utf-8")); print(data.get("pkg_url") or data.get("bootstrap_pkg_url") or "")' "$resp")"
+          rm -f "$resp"
+
+          if [[ -z "$pkg_url" ]]; then
+            echo "Mint response missing pkg_url; skipping seed-config.json." >&2
+            exit 0
+          fi
+
+          echo "::add-mask::$pkg_url"
+          echo "PDES_PKG_URL=$pkg_url" >> "$GITHUB_ENV"
+
+          python3 -c 'import json,sys; pkg_url=sys.argv[1]; open("packaging/linux/seed-config.json","w",encoding="utf-8").write(json.dumps({"bootstrap_pkg_url": pkg_url}, indent=2, sort_keys=True) + "\\n")' "$pkg_url"
+          echo "Wrote packaging/linux/seed-config.json for bootstrap."
+
       - name: Install cargo-deb
         run: cargo install cargo-deb
 
@@ -171,8 +207,42 @@ jobs:
       - name: Build release binary (GNU)
         run: rustup run $env:RUSTUP_TOOLCHAIN cargo build --release --target $env:CARGO_TARGET
 
+      - name: Mint bootstrap pkg URL (optional)
+        env:
+          PDES_WRITER_API_TOKEN: ${{ secrets.PDES_WRITER_API_TOKEN }}
+          PDES_APP_SLUG: ${{ vars.PDES_APP_SLUG }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (-not $env:PDES_WRITER_API_TOKEN) {
+            Write-Host "PDES_WRITER_API_TOKEN not set; skipping bootstrap mint."
+            exit 0
+          }
+          $slug = $env:PDES_APP_SLUG
+          if (-not $slug) { $slug = "pdes-fwx-updater" }
+          $target = "windows:x86_64"
+          $body = @{ app_slug = $slug; target = $target } | ConvertTo-Json -Compress
+          $resp = Invoke-RestMethod -Method Post `
+            -Uri "https://apps.palodurosystems.io/api/bootstrap/mint" `
+            -Headers @{ Authorization = "Bearer $($env:PDES_WRITER_API_TOKEN)" } `
+            -ContentType "application/json" `
+            -Body $body
+          $pkgUrl = $resp.pkg_url
+          if (-not $pkgUrl) { $pkgUrl = $resp.bootstrap_pkg_url }
+          if (-not $pkgUrl) {
+            Write-Host "Mint response missing pkg_url; skipping."
+            exit 0
+          }
+          Write-Output "::add-mask::$pkgUrl"
+          "PDES_PKG_URL=$pkgUrl" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Minted bootstrap pkg URL for build_dist."
+
       - name: Package distribution folder
         run: rustup run $env:RUSTUP_TOOLCHAIN cargo run --bin build_dist --release --target $env:CARGO_TARGET
+        env:
+          # Used by src/bin/build_dist.rs to generate dist/PDES/seed-config.json for bootstrap installs.
+          PDES_API_BASE_URL: ${{ vars.PDES_API_BASE_URL }}
+          PDES_APP_SLUG: ${{ vars.PDES_APP_SLUG }}
+          PDES_FIRMWARE_CHANNEL: ${{ vars.PDES_FIRMWARE_CHANNEL }}
 
       - name: Build MSI
         run: ./scripts/windows/build-msi.ps1 -PayloadDir "dist\PDES" -OutputMsi "dist\PDES.msi"

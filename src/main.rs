@@ -18,7 +18,10 @@ mod seed;
 mod settings;
 mod updater;
 
-use crate::downloader::{download_app_pkg_to_staging_verified, download_to_app_firmware_verified};
+use crate::downloader::{
+    download_app_pkg_to_staging_verified, download_to_app_firmware_verified,
+    find_cached_firmware_by_sha256, find_latest_cached_firmware,
+};
 use crate::flasher::{ChipModel, FlashVector};
 use crate::manifest::UpdateIdentity;
 use crate::package::{extract_pkg_and_find_installer, launch_installer};
@@ -78,6 +81,8 @@ enum UiEvent {
     SetFirmwarePath(PathBuf),
     BootstrapComplete(crate::bootstrap::BootstrapExchangeResult),
     BootstrapFailed(String),
+    UpdateResultAvailable(crate::updater::UpdateResult),
+    FirmwareEnsureFinished,
     ExitRequested,
 }
 
@@ -145,9 +150,12 @@ struct FWUpdater {
     splash_app_update_in_flight: bool,
     splash_hold_until: Option<Instant>,
     splash_hold_key: Option<SplashHoldKey>,
+    splash_firmware_in_flight: bool,
+    splash_firmware_done: bool,
     exit_requested: bool,
 
     update_state: UpdateCheckState,
+    last_update_result: Option<crate::updater::UpdateResult>,
     update_check_started: bool,
     bootstrap_in_flight: bool,
     bootstrap_retry_at: Option<Instant>,
@@ -216,8 +224,11 @@ impl Default for FWUpdater {
             splash_app_update_in_flight: false,
             splash_hold_until: None,
             splash_hold_key: None,
+            splash_firmware_in_flight: false,
+            splash_firmware_done: false,
             exit_requested: false,
             update_state: UpdateCheckState::NotConfigured,
+            last_update_result: None,
             update_check_started: false,
             bootstrap_in_flight: false,
             bootstrap_retry_at: None,
@@ -305,11 +316,13 @@ impl FWUpdater {
 
         let tx = self.update_tx.clone();
         let ot_tx = self.ot_tx.clone();
+        let ui_tx = self.ui_tx.clone();
         let current_version = env!("CARGO_PKG_VERSION").to_string();
         std::thread::spawn(move || {
             let _ = tx.send(UpdateCheckState::Checking);
             match updater::check_for_updates(&package_url, &firmware_url, &token) {
                 Ok(result) => {
+                    let _ = ui_tx.send(UiEvent::UpdateResultAvailable(result.clone()));
                     let app_update_available = result.app.as_ref().is_some_and(|a| {
                         updater::is_newer_version(&current_version, &a.latest_version)
                     });
@@ -400,6 +413,97 @@ impl FWUpdater {
         true
     }
 
+    fn ensure_startup_firmware_ready(&mut self, ctx: &egui::Context) -> bool {
+        if self.splash_firmware_done {
+            return true;
+        }
+        if self.splash_firmware_in_flight {
+            ctx.request_repaint();
+            return false;
+        }
+
+        let latest = self
+            .last_update_result
+            .as_ref()
+            .and_then(|r| r.firmware.as_ref());
+
+        // If we can't determine the latest firmware from the server, fall back to the newest cached
+        // firmware (if present) and proceed.
+        let (url, expected_sha) = match latest {
+            Some(fw) => {
+                let Some(url) = fw.download_url.as_deref() else {
+                    if let Ok(Some(path)) = find_latest_cached_firmware() {
+                        let _ = self.ui_tx.send(UiEvent::SetFirmwarePath(path));
+                    }
+                    self.splash_firmware_done = true;
+                    return true;
+                };
+                let Some(sha) = fw.sha256.as_deref() else {
+                    if let Ok(Some(path)) = find_latest_cached_firmware() {
+                        let _ = self.ui_tx.send(UiEvent::SetFirmwarePath(path));
+                    }
+                    self.splash_firmware_done = true;
+                    return true;
+                };
+                (url.to_string(), sha.to_string())
+            }
+            None => {
+                if let Ok(Some(path)) = find_latest_cached_firmware() {
+                    let _ = self.ui_tx.send(UiEvent::SetFirmwarePath(path));
+                }
+                self.splash_firmware_done = true;
+                return true;
+            }
+        };
+
+        // If we already have the expected firmware cached, select it and proceed.
+        if let Ok(Some(path)) = find_cached_firmware_by_sha256(&expected_sha) {
+            let _ = self.ui_tx.send(UiEvent::SetFirmwarePath(path));
+            self.splash_firmware_done = true;
+            return true;
+        }
+
+        let Some(token) = self.effective_update_token() else {
+            if let Ok(Some(path)) = find_latest_cached_firmware() {
+                let _ = self.ui_tx.send(UiEvent::SetFirmwarePath(path));
+            }
+            self.splash_firmware_done = true;
+            return true;
+        };
+
+        self.splash_firmware_in_flight = true;
+        let ot_tx = self.ot_tx.clone();
+        let lp_tx = self.lp_tx.clone();
+        let ui_tx = self.ui_tx.clone();
+        std::thread::spawn(move || {
+            let _ = lp_tx.send(0.45);
+            let _ = ot_tx.send("Checking cached firmware...".to_string());
+            let cached = find_cached_firmware_by_sha256(&expected_sha).ok().flatten();
+            if let Some(path) = cached {
+                let _ = ot_tx.send("Using cached firmware.".to_string());
+                let _ = ui_tx.send(UiEvent::SetFirmwarePath(path));
+                let _ = ui_tx.send(UiEvent::FirmwareEnsureFinished);
+                return;
+            }
+
+            let _ = lp_tx.send(0.7);
+            let _ = ot_tx.send("Downloading latest firmware...".to_string());
+            match download_to_app_firmware_verified(&url, &token, &expected_sha) {
+                Ok(path) => {
+                    let _ = ot_tx.send(format!("Downloaded firmware to {}", path.display()));
+                    let _ = ui_tx.send(UiEvent::SetFirmwarePath(path));
+                }
+                Err(e) => {
+                    let _ = ot_tx.send(format!("Firmware download failed: {e:#}"));
+                }
+            }
+            let _ = lp_tx.send(1.0);
+            let _ = ui_tx.send(UiEvent::FirmwareEnsureFinished);
+        });
+        ctx.request_repaint();
+        false
+    }
+
     fn update_splash(&mut self, ctx: &egui::Context) {
         self.ensure_updater(false);
 
@@ -410,6 +514,7 @@ impl FWUpdater {
                 self.splash_hold_key = None;
                 self.splash_status = "Updater not configured; continuing.".to_string();
                 let _ = self.lp_tx.send(1.0);
+                self.splash_firmware_done = true;
                 let _ = self.stat_tx.send(ViewState::Main);
             }
             UpdateCheckState::Checking => {
@@ -425,6 +530,9 @@ impl FWUpdater {
                 if !self.splash_delay_elapsed(ctx, SplashHoldKey::UpToDate) {
                     return;
                 }
+                if !self.ensure_startup_firmware_ready(ctx) {
+                    return;
+                }
                 let _ = self.stat_tx.send(ViewState::Main);
             }
             UpdateCheckState::Error(e) => {
@@ -433,9 +541,17 @@ impl FWUpdater {
                 if !self.splash_delay_elapsed(ctx, SplashHoldKey::Error) {
                     return;
                 }
+                // Can't trust remote metadata; still try to select the newest cached firmware.
+                if !self.splash_firmware_done {
+                    if let Ok(Some(path)) = find_latest_cached_firmware() {
+                        let _ = self.ui_tx.send(UiEvent::SetFirmwarePath(path));
+                    }
+                    self.splash_firmware_done = true;
+                }
                 let _ = self.stat_tx.send(ViewState::Main);
             }
             UpdateCheckState::UpdateAvailable(result) => {
+                self.last_update_result = Some(result.clone());
                 self.splash_hold_until = None;
                 self.splash_hold_key = None;
                 let current_version = env!("CARGO_PKG_VERSION");
@@ -447,6 +563,9 @@ impl FWUpdater {
                 if !app_update {
                     self.splash_status = "No app update; continuing.".to_string();
                     let _ = self.lp_tx.send(1.0);
+                    if !self.ensure_startup_firmware_ready(ctx) {
+                        return;
+                    }
                     let _ = self.stat_tx.send(ViewState::Main);
                     return;
                 }
@@ -811,6 +930,13 @@ impl App for FWUpdater {
                     self.elf_path = Arc::new(Mutex::new(Some(path.clone())));
                     self.fd_text = path.display().to_string();
                     self.console.write("Firmware downloaded and selected.");
+                }
+                UiEvent::UpdateResultAvailable(result) => {
+                    self.last_update_result = Some(result);
+                }
+                UiEvent::FirmwareEnsureFinished => {
+                    self.splash_firmware_in_flight = false;
+                    self.splash_firmware_done = true;
                 }
                 UiEvent::BootstrapComplete(result) => {
                     self.device_token = Some(result.device_token);
