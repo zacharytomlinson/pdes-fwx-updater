@@ -85,8 +85,15 @@ const UI_CENTER_COLUMN_MAX_WIDTH: f32 = 900.0;
 const UI_CONTROLS_DEFAULT_HEIGHT: f32 = 420.0;
 const UI_CONTROLS_MIN_HEIGHT: f32 = 220.0;
 const UI_LOGO_MAX_HEIGHT: f32 = 80.0;
-const UI_FLASH_PANEL_HEIGHT: f32 = 124.0;
+const UI_FLASH_PANEL_HEIGHT: f32 = 78.0;
 const UI_FLASH_BUTTON_SIZE: Vec2 = Vec2::new(140.0, 32.0);
+const SPLASH_MIN_OUTCOME_DURATION: Duration = Duration::from_millis(1500);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SplashHoldKey {
+    UpToDate,
+    Error,
+}
 
 fn next_bootstrap_backoff(failures: u32) -> Duration {
     let exp = failures.min(5);
@@ -136,6 +143,8 @@ struct FWUpdater {
     app_version: String,
     splash_status: String,
     splash_app_update_in_flight: bool,
+    splash_hold_until: Option<Instant>,
+    splash_hold_key: Option<SplashHoldKey>,
     exit_requested: bool,
 
     update_state: UpdateCheckState,
@@ -205,6 +214,8 @@ impl Default for FWUpdater {
             app_version,
             splash_status: "Starting...".to_string(),
             splash_app_update_in_flight: false,
+            splash_hold_until: None,
+            splash_hold_key: None,
             exit_requested: false,
             update_state: UpdateCheckState::NotConfigured,
             update_check_started: false,
@@ -374,17 +385,36 @@ impl FWUpdater {
         });
     }
 
+    fn splash_delay_elapsed(&mut self, ctx: &egui::Context, key: SplashHoldKey) -> bool {
+        if self.splash_hold_key != Some(key) {
+            self.splash_hold_key = Some(key);
+            self.splash_hold_until = None;
+        }
+        let hold_until = self
+            .splash_hold_until
+            .get_or_insert_with(|| Instant::now() + SPLASH_MIN_OUTCOME_DURATION);
+        if Instant::now() < *hold_until {
+            ctx.request_repaint();
+            return false;
+        }
+        true
+    }
+
     fn update_splash(&mut self, ctx: &egui::Context) {
         self.ensure_updater(false);
 
         let state = self.update_state.clone();
         match state {
             UpdateCheckState::NotConfigured => {
+                self.splash_hold_until = None;
+                self.splash_hold_key = None;
                 self.splash_status = "Updater not configured; continuing.".to_string();
                 let _ = self.lp_tx.send(1.0);
                 let _ = self.stat_tx.send(ViewState::Main);
             }
             UpdateCheckState::Checking => {
+                self.splash_hold_until = None;
+                self.splash_hold_key = None;
                 self.splash_status = "Checking for updates...".to_string();
                 let _ = self.lp_tx.send(0.2);
                 ctx.request_repaint();
@@ -392,14 +422,22 @@ impl FWUpdater {
             UpdateCheckState::UpToDate => {
                 self.splash_status = "Up to date.".to_string();
                 let _ = self.lp_tx.send(1.0);
+                if !self.splash_delay_elapsed(ctx, SplashHoldKey::UpToDate) {
+                    return;
+                }
                 let _ = self.stat_tx.send(ViewState::Main);
             }
             UpdateCheckState::Error(e) => {
                 self.splash_status = format!("Update check failed; continuing. ({})", e);
                 let _ = self.lp_tx.send(1.0);
+                if !self.splash_delay_elapsed(ctx, SplashHoldKey::Error) {
+                    return;
+                }
                 let _ = self.stat_tx.send(ViewState::Main);
             }
             UpdateCheckState::UpdateAvailable(result) => {
+                self.splash_hold_until = None;
+                self.splash_hold_key = None;
                 let current_version = env!("CARGO_PKG_VERSION");
                 let app_update = result
                     .app
@@ -1147,11 +1185,30 @@ impl App for FWUpdater {
                                 let flasher: Flasher = self.flasher.lock().unwrap().clone();
                                 self.start_flash_op(flasher, path, ctx.clone());
                             }
-                            ui.add_space(6.0);
+                            ui.add_space(2.0);
+                            let version_color = match &self.update_state {
+                                UpdateCheckState::UpToDate => Color32::from_rgb(80, 160, 255),
+                                UpdateCheckState::UpdateAvailable(result) => {
+                                    let current_version = env!("CARGO_PKG_VERSION");
+                                    let app_update = result.app.as_ref().is_some_and(|a| {
+                                        updater::is_newer_version(
+                                            current_version,
+                                            &a.latest_version,
+                                        )
+                                    });
+                                    if app_update {
+                                        ui.visuals().weak_text_color()
+                                    } else {
+                                        Color32::from_rgb(80, 160, 255)
+                                    }
+                                }
+                                UpdateCheckState::Error(_) => Color32::from_rgb(255, 90, 90),
+                                _ => ui.visuals().weak_text_color(),
+                            };
                             ui.label(
                                 RichText::new(format!("v{}", self.app_version))
                                     .size(12.0)
-                                    .color(ui.visuals().weak_text_color()),
+                                    .color(version_color),
                             );
                         });
                     });
