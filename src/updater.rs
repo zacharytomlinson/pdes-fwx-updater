@@ -44,6 +44,13 @@ pub fn check_for_updates(
     Ok(UpdateResult { app, firmware })
 }
 
+pub fn fetch_firmware_update(
+    firmware_latest_url: &str,
+    token: &str,
+) -> anyhow::Result<Option<ArtifactUpdate>> {
+    fetch_artifact(firmware_latest_url, token)
+}
+
 fn fetch_artifact(url: &str, token: &str) -> anyhow::Result<Option<ArtifactUpdate>> {
     let response = match ureq::get(url)
         .timeout(Duration::from_secs(10))

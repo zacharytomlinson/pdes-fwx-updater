@@ -92,17 +92,29 @@ impl UpdateIdentity {
         )
     }
 
-    pub fn firmware_latest_url(&self) -> String {
+    pub fn firmware_latest_url(&self, hw_rev: Option<u32>) -> String {
         if let Some(url) = &self.firmware_latest_url {
-            return join_api_url(&self.api_base_url, url);
+            return append_hw_rev_query(join_api_url(&self.api_base_url, url), hw_rev);
         }
         let target = format!("{}:{}", self.os, self.arch);
         let base = self.api_base_url.trim_end_matches('/');
-        format!(
-            "{}/apps/{}/firmware/latest?channel={}&os={}&arch={}&target={}",
-            base, self.slug, self.firmware_channel, self.os, self.arch, target
+        append_hw_rev_query(
+            format!(
+                "{}/apps/{}/firmware/latest?channel={}&os={}&arch={}&target={}",
+                base, self.slug, self.firmware_channel, self.os, self.arch, target
+            ),
+            hw_rev,
         )
     }
+}
+
+fn append_hw_rev_query(mut url: String, hw_rev: Option<u32>) -> String {
+    if let Some(hw_rev) = hw_rev {
+        let sep = if url.contains('?') { '&' } else { '?' };
+        url.push(sep);
+        url.push_str(&format!("hw_rev={hw_rev:08X}"));
+    }
+    url
 }
 
 fn join_api_url(base: &str, path: &str) -> String {
@@ -275,7 +287,7 @@ fn default_api_base_url() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::join_api_url;
+    use super::{UpdateIdentity, join_api_url};
 
     #[test]
     fn join_api_url_dedupes_api_prefix() {
@@ -302,6 +314,36 @@ mod tests {
         assert_eq!(
             join_api_url(base, "/apps/pdes-fwx-updater/package/latest"),
             "https://apps.palodurosystems.io/api/apps/pdes-fwx-updater/package/latest"
+        );
+    }
+
+    #[test]
+    fn firmware_latest_url_appends_hw_rev_query() {
+        let identity = UpdateIdentity::default_for_current_platform();
+        assert!(
+            identity
+                .firmware_latest_url(Some(0x2A))
+                .ends_with("&hw_rev=0000002A")
+        );
+    }
+
+    #[test]
+    fn firmware_latest_url_appends_hw_rev_to_configured_path() {
+        let identity = UpdateIdentity {
+            slug: "pdes-fwx-updater".to_string(),
+            os: "linux".to_string(),
+            arch: "x86_64".to_string(),
+            api_base_url: "https://apps.palodurosystems.io/api".to_string(),
+            bootstrap_pkg_url: None,
+            firmware_channel: "stable".to_string(),
+            firmware_latest_url: Some(
+                "/api/apps/pdes-fwx-updater/firmware/latest?channel=stable".to_string(),
+            ),
+        };
+
+        assert_eq!(
+            identity.firmware_latest_url(Some(0x2A)),
+            "https://apps.palodurosystems.io/api/apps/pdes-fwx-updater/firmware/latest?channel=stable&hw_rev=0000002A"
         );
     }
 }

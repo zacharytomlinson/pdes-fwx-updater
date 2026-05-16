@@ -35,7 +35,7 @@ use egui_file_dialog::FileDialog;
 use flasher::Flasher;
 use probe_rs::probe::list::Lister;
 use serialport::{SerialPortInfo, SerialPortType};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -110,6 +110,83 @@ fn next_bootstrap_backoff(failures: u32) -> Duration {
         .map(|d| (d.subsec_millis() % 500) as u64)
         .unwrap_or(0);
     Duration::from_secs(secs) + Duration::from_millis(jitter_ms)
+}
+
+fn format_hw_rev(hw_rev: Option<u32>) -> String {
+    hw_rev
+        .map(|value| format!("0x{value:08X}"))
+        .unwrap_or_else(|| "unset".to_string())
+}
+
+fn is_updater_managed_firmware_path(path: &Path) -> bool {
+    crate::app_dirs::firmware_dir()
+        .ok()
+        .is_some_and(|dir| path.starts_with(dir))
+}
+
+fn resolve_firmware_for_detected_board(
+    update_identity: &UpdateIdentity,
+    token: Option<&str>,
+    hw_rev: Option<u32>,
+    current_path: &Path,
+    ot_tx: &Sender<String>,
+    ui_tx: &Sender<UiEvent>,
+) -> anyhow::Result<Option<PathBuf>> {
+    let Some(token) = token.filter(|s| !s.trim().is_empty()) else {
+        return Ok(None);
+    };
+    if !is_updater_managed_firmware_path(current_path) {
+        return Ok(None);
+    }
+
+    let firmware_url = update_identity.firmware_latest_url(hw_rev);
+    let Some(artifact) = updater::fetch_firmware_update(&firmware_url, token)? else {
+        return Ok(None);
+    };
+
+    let version = artifact.latest_version.trim().to_string();
+    let Some(download_url) = artifact.download_url else {
+        let _ = ot_tx.send(format!(
+            "Firmware metadata for board {} is missing a download URL; keeping current file.",
+            format_hw_rev(hw_rev)
+        ));
+        return Ok(None);
+    };
+    let Some(expected_sha) = artifact.sha256 else {
+        let _ = ot_tx.send(format!(
+            "Firmware metadata for board {} is missing sha256; keeping current file.",
+            format_hw_rev(hw_rev)
+        ));
+        return Ok(None);
+    };
+
+    if let Some(path) = find_cached_firmware_by_sha256(&expected_sha)? {
+        let _ = ot_tx.send(format!(
+            "Using cached firmware {} for board {}.",
+            if version.is_empty() {
+                "artifact".to_string()
+            } else {
+                version
+            },
+            format_hw_rev(hw_rev)
+        ));
+        let _ = ui_tx.send(UiEvent::SetFirmwarePath(path.clone()));
+        return Ok(Some(path));
+    }
+
+    let downloaded = download_to_app_firmware_verified(&download_url, token, &expected_sha)?;
+    let _ = ot_tx.send(format!(
+        "Downloaded firmware {} for board {} to {}.",
+        if version.is_empty() {
+            "artifact".to_string()
+        } else {
+            version
+        },
+        format_hw_rev(hw_rev),
+        downloaded.display()
+    ));
+    let _ = ui_tx.send(UiEvent::SetFirmwarePath(downloaded.clone()));
+    Ok(Some(downloaded))
 }
 
 //the main application struct, holding its current screen
@@ -312,7 +389,7 @@ impl FWUpdater {
 
     fn start_update_check(&mut self, token: String) {
         let package_url = self.update_identity.package_latest_url();
-        let firmware_url = self.update_identity.firmware_latest_url();
+        let firmware_url = self.update_identity.firmware_latest_url(None);
 
         let tx = self.update_tx.clone();
         let ot_tx = self.ot_tx.clone();
@@ -744,6 +821,9 @@ impl FWUpdater {
         let lp_tx = self.lp_tx.clone();
         let result_tx = self.result_tx.clone();
         let status_tx = self.status_tx.clone();
+        let ui_tx = self.ui_tx.clone();
+        let update_identity = self.update_identity.clone();
+        let update_token = self.effective_update_token();
         let _ = status_tx.send(AppStatus::InProgress);
         tokio::spawn(async move {
             if flash.flash_vector == FlashVector::Probe {
@@ -823,9 +903,49 @@ impl FWUpdater {
                                         .to_string(),
                                 );
                                 ctx.request_repaint();
+                                let detected_hw_rev = if flash.chip == ChipModel::ATSAMD21G18A {
+                                    match flash.query_bootloader_hw_rev() {
+                                        Ok(hw_rev) => {
+                                            let _ = ot_tx.send(format!(
+                                                "Detected board hardware revision: {}",
+                                                format_hw_rev(hw_rev)
+                                            ));
+                                            hw_rev
+                                        }
+                                        Err(e) => {
+                                            let _ = ot_tx.send(format!(
+                                                "Unable to read board hardware revision: {e:#}"
+                                            ));
+                                            None
+                                        }
+                                    }
+                                } else {
+                                    None
+                                };
+
+                                let current_path = PathBuf::from(&path);
+                                let flash_path = match resolve_firmware_for_detected_board(
+                                    &update_identity,
+                                    update_token.as_deref(),
+                                    detected_hw_rev,
+                                    &current_path,
+                                    &ot_tx,
+                                    &ui_tx,
+                                ) {
+                                    Ok(Some(resolved)) => resolved,
+                                    Ok(None) => current_path,
+                                    Err(e) => {
+                                        let _ = ot_tx.send(format!(
+                                            "Unable to resolve firmware for board {}: {e:#}",
+                                            format_hw_rev(detected_hw_rev)
+                                        ));
+                                        current_path
+                                    }
+                                };
+
                                 let ot_tx_evt = ot_tx.clone();
                                 match flash
-                                    .flash_via_usb(path, move |evt| {
+                                    .flash_via_usb(flash_path.display().to_string(), move |evt| {
                                         let _ = ot_tx_evt.send(format!("{:#?}", evt));
                                         ctx.request_repaint();
                                     })
@@ -851,9 +971,49 @@ impl FWUpdater {
                                 ctx.request_repaint();
                                 println!("{}", path);
                                 println!("{:#?}", flash.selected_port);
+                                let detected_hw_rev = if flash.chip == ChipModel::ATSAMD21G18A {
+                                    match flash.query_bootloader_hw_rev() {
+                                        Ok(hw_rev) => {
+                                            let _ = ot_tx.send(format!(
+                                                "Detected board hardware revision: {}",
+                                                format_hw_rev(hw_rev)
+                                            ));
+                                            hw_rev
+                                        }
+                                        Err(e) => {
+                                            let _ = ot_tx.send(format!(
+                                                "Unable to read board hardware revision: {e:#}"
+                                            ));
+                                            None
+                                        }
+                                    }
+                                } else {
+                                    None
+                                };
+
+                                let current_path = PathBuf::from(&path);
+                                let flash_path = match resolve_firmware_for_detected_board(
+                                    &update_identity,
+                                    update_token.as_deref(),
+                                    detected_hw_rev,
+                                    &current_path,
+                                    &ot_tx,
+                                    &ui_tx,
+                                ) {
+                                    Ok(Some(resolved)) => resolved,
+                                    Ok(None) => current_path,
+                                    Err(e) => {
+                                        let _ = ot_tx.send(format!(
+                                            "Unable to resolve firmware for board {}: {e:#}",
+                                            format_hw_rev(detected_hw_rev)
+                                        ));
+                                        current_path
+                                    }
+                                };
+
                                 let ot_tx_evt = ot_tx.clone();
                                 match flash
-                                    .flash_via_usb(path, move |evt| {
+                                    .flash_via_usb(flash_path.display().to_string(), move |evt| {
                                         let _ = ot_tx_evt.send(format!("{:#?}", evt));
                                         ctx.request_repaint();
                                     })

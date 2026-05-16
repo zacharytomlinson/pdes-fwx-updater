@@ -4,14 +4,15 @@
 //! Date: 2025-02-12
 //! Handles probe-rs flashing and USB bossac invocation with bundled-tool lookup
 //! for both Windows and Linux distributions.
-use anyhow::anyhow;
+use anyhow::{Context, anyhow};
 use probe_rs::flashing::{DownloadOptions, FlashError, FlashProgress, ProgressEvent};
 use probe_rs::probe::{DebugProbeError, DebugProbeInfo, Probe, list::Lister};
 use probe_rs::{Permissions, Session};
-use serialport::{SerialPortType, UsbPortInfo};
+use serialport::{ClearBuffer, SerialPortType, UsbPortInfo};
 use std::collections::HashMap;
 use std::env;
 use std::fs;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::thread::sleep;
@@ -171,6 +172,44 @@ impl Flasher {
         Err(anyhow!("Timed out waiting for bootloader port"))
     }
 
+    pub fn query_bootloader_hw_rev(&self) -> anyhow::Result<Option<u32>> {
+        let mut port = serialport::new(self.selected_port.clone(), 115_200)
+            .timeout(Duration::from_millis(300))
+            .open()
+            .with_context(|| {
+                format!(
+                    "Unable to open bootloader port {} for hardware revision query",
+                    self.selected_port
+                )
+            })?;
+
+        let _ = port.clear(ClearBuffer::All);
+        port.write_all(b"I#")
+            .context("Unable to send hardware revision query")?;
+        port.flush()
+            .context("Unable to flush hardware revision query")?;
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut response = Vec::with_capacity(16);
+        let mut buf = [0u8; 64];
+
+        while Instant::now() < deadline {
+            match port.read(&mut buf) {
+                Ok(0) => {}
+                Ok(n) => {
+                    response.extend_from_slice(&buf[..n]);
+                    if response.contains(&b'#') {
+                        break;
+                    }
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {}
+                Err(e) => return Err(e).context("Unable to read hardware revision response"),
+            }
+        }
+
+        parse_bootloader_hw_rev_response(&response)
+    }
+
     /// Flash via USB using bossac, streaming output to the callback.
     pub async fn flash_via_usb(
         &self,
@@ -292,9 +331,33 @@ impl Flasher {
     }
 }
 
+fn parse_bootloader_hw_rev_response(response: &[u8]) -> anyhow::Result<Option<u32>> {
+    let text = String::from_utf8_lossy(response);
+    let start = text
+        .find('I')
+        .ok_or_else(|| anyhow!("Hardware revision response missing I prefix"))?;
+    let text = &text[start + 1..];
+    let end = text
+        .find('#')
+        .ok_or_else(|| anyhow!("Hardware revision response missing terminator"))?;
+    let hex = text[..end].trim();
+
+    if hex.len() != 8 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        anyhow::bail!("Unexpected hardware revision payload: {hex}");
+    }
+
+    let value = u32::from_str_radix(hex, 16)
+        .with_context(|| format!("Invalid hardware revision payload: {hex}"))?;
+    if value == 0xFFFF_FFFF {
+        Ok(None)
+    } else {
+        Ok(Some(value))
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::Flasher;
+    use super::{Flasher, parse_bootloader_hw_rev_response};
     use std::env;
     use std::fs;
 
@@ -326,5 +389,23 @@ mod tests {
 
         // cleanup temp file
         let _ = fs::remove_file(forced);
+    }
+
+    #[test]
+    fn parses_bootloader_hw_rev_response() {
+        assert_eq!(
+            parse_bootloader_hw_rev_response(b"I0000002A#\r\n").unwrap(),
+            Some(0x2A)
+        );
+        assert_eq!(
+            parse_bootloader_hw_rev_response(b"\r\nIFFFFFFFF#\r\n").unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_bootloader_hw_rev_response() {
+        assert!(parse_bootloader_hw_rev_response(b"I123#").is_err());
+        assert!(parse_bootloader_hw_rev_response(b"garbage").is_err());
     }
 }
