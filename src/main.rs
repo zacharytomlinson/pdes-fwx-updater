@@ -143,7 +143,7 @@ fn companion_panel_frame() -> egui::Frame {
     egui::Frame::NONE
         .fill(companion_panel())
         .corner_radius(16)
-        .stroke(Stroke::new(1.0, companion_border()))
+        .stroke(Stroke::new(1.0_f32, companion_border()))
         .inner_margin(egui::Margin::same(18))
 }
 
@@ -151,7 +151,7 @@ fn companion_soft_frame() -> egui::Frame {
     egui::Frame::NONE
         .fill(companion_panel_soft())
         .corner_radius(12)
-        .stroke(Stroke::new(1.0, companion_border()))
+        .stroke(Stroke::new(1.0_f32, companion_border()))
         .inner_margin(egui::Margin::same(12))
 }
 
@@ -164,20 +164,20 @@ fn apply_companion_style(ctx: &egui::Context) {
     visuals.hyperlink_color = companion_accent();
     visuals.override_text_color = Some(companion_text());
     visuals.selection.bg_fill = companion_accent();
-    visuals.selection.stroke = Stroke::new(1.0, companion_text());
+    visuals.selection.stroke = Stroke::new(1.0_f32, companion_text());
     visuals.widgets.noninteractive.bg_fill = companion_panel();
-    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, companion_text());
+    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, companion_text());
     visuals.widgets.inactive.bg_fill = companion_input();
-    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, companion_border());
-    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, companion_text());
+    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, companion_border());
+    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, companion_text());
     visuals.widgets.hovered.bg_fill = Color32::from_rgb(12, 35, 58);
-    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, companion_accent());
-    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, companion_text());
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, companion_accent());
+    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, companion_text());
     visuals.widgets.active.bg_fill = Color32::from_rgb(8, 47, 73);
-    visuals.widgets.active.bg_stroke = Stroke::new(1.0, companion_accent_strong());
+    visuals.widgets.active.bg_stroke = Stroke::new(1.0_f32, companion_accent_strong());
     visuals.widgets.open.bg_fill = companion_input();
-    visuals.widgets.open.bg_stroke = Stroke::new(1.0, companion_accent());
-    visuals.window_stroke = Stroke::new(1.0, companion_border());
+    visuals.widgets.open.bg_stroke = Stroke::new(1.0_f32, companion_accent());
+    visuals.window_stroke = Stroke::new(1.0_f32, companion_border());
     ctx.set_visuals(visuals);
 
     let mut style = (*ctx.style()).clone();
@@ -197,7 +197,7 @@ fn status_badge(ui: &mut egui::Ui, text: impl Into<String>, color: Color32) {
         ))
         .corner_radius(10)
         .stroke(Stroke::new(
-            1.0,
+            1.0_f32,
             Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 110),
         ))
         .inner_margin(egui::Margin::symmetric(10, 5))
@@ -1472,7 +1472,7 @@ impl App for FWUpdater {
                                                                 Button::new("Refresh")
                                                                     .fill(companion_input())
                                                                     .stroke(Stroke::new(
-                                                                        1.0,
+                                                                        1.0_f32,
                                                                         companion_border(),
                                                                     )),
                                                             )
@@ -1489,7 +1489,7 @@ impl App for FWUpdater {
                                                                 Button::new("Updater token")
                                                                     .fill(companion_input())
                                                                     .stroke(Stroke::new(
-                                                                        1.0,
+                                                                        1.0_f32,
                                                                         companion_border(),
                                                                     )),
                                                             )
@@ -1678,7 +1678,7 @@ impl App for FWUpdater {
                                     .size(16.0),
                             )
                             .fill(companion_accent_strong())
-                            .stroke(Stroke::new(1.0, companion_accent()));
+                            .stroke(Stroke::new(1.0_f32, companion_accent()));
                             if ui.add_sized(button_size, button).clicked() {
                                 let path = self
                                     .elf_path
@@ -1815,7 +1815,7 @@ impl App for FWUpdater {
                             .add(
                                 Button::new(RichText::new("Close").color(companion_bg()).strong())
                                     .fill(companion_accent_strong())
-                                    .stroke(Stroke::new(1.0, companion_accent())),
+                                    .stroke(Stroke::new(1.0_f32, companion_accent())),
                             )
                             .clicked()
                         {
@@ -1860,7 +1860,7 @@ impl App for FWUpdater {
                             .add(
                                 Button::new(RichText::new("Save").color(companion_bg()).strong())
                                     .fill(companion_accent_strong())
-                                    .stroke(Stroke::new(1.0, companion_accent())),
+                                    .stroke(Stroke::new(1.0_f32, companion_accent())),
                             )
                             .clicked()
                         {
@@ -1887,7 +1887,7 @@ impl App for FWUpdater {
                             .add(
                                 Button::new("Later")
                                     .fill(companion_input())
-                                    .stroke(Stroke::new(1.0, companion_border())),
+                                    .stroke(Stroke::new(1.0_f32, companion_border())),
                             )
                             .clicked()
                         {
