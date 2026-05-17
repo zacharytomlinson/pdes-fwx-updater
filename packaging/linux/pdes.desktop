@@ -5,5 +5,6 @@ Name=PDES Firmware Updater
 Comment=Flash PDES firmware over USB or probe
 Exec=/usr/bin/pdes-fwx-updater
 Icon=pdes
+StartupWMClass=pdes
 Terminal=false
 Categories=Utility;Development;
