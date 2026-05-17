@@ -220,7 +220,12 @@ impl Flasher {
 
         //"/home/arch/.arduino15/packages/arduino/tools/bossac/1.7.0-arduino3/bossac" -i -d --port=ttyACM0 -U true -i -e -w -v "/home/arch/.cache/arduino/sketches/A5A9B19BBB40C6A3656AB42EF73C1D25/Blink.ino.bin" -R
         #[cfg(target_os = "linux")]
-        let dev_path: String = format!("--port={}", self.selected_port.trim_prefix("/dev/"));
+        let dev_path: String = format!(
+            "--port={}",
+            self.selected_port
+                .strip_prefix("/dev/")
+                .unwrap_or(&self.selected_port)
+        );
         #[cfg(target_os = "windows")]
         let dev_path: String = format!("--port={}", self.selected_port);
 

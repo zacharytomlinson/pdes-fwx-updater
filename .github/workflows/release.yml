@@ -77,12 +77,24 @@ jobs:
           target="linux:x86_64"
 
           resp="$(mktemp)"
-          curl -fsSL \
-            -H "Authorization: Bearer ${PDES_WRITER_API_TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d "{\"app_slug\":\"${slug}\",\"target\":\"${target}\"}" \
-            "https://apps.palodurosystems.io/api/bootstrap/mint" \
-            -o "$resp"
+          http_code="$(
+            curl -sS \
+              -w "%{http_code}" \
+              -H "Authorization: Bearer ${PDES_WRITER_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "{\"app_slug\":\"${slug}\",\"target\":\"${target}\"}" \
+              "https://apps.palodurosystems.io/api/bootstrap/mint" \
+              -o "$resp"
+          )"
+
+          if [[ "$http_code" -lt 200 || "$http_code" -ge 300 ]]; then
+            echo "Bootstrap mint returned HTTP ${http_code}; continuing without seed-config.json." >&2
+            if [[ "$http_code" == "403" ]]; then
+              echo "Check secrets.PDES_WRITER_API_TOKEN permissions and vars.PDES_APP_SLUG (${slug})." >&2
+            fi
+            rm -f "$resp"
+            exit 0
+          fi
 
           pkg_url="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1], "r", encoding="utf-8")); print(data.get("pkg_url") or data.get("bootstrap_pkg_url") or "")' "$resp")"
           rm -f "$resp"
@@ -221,11 +233,27 @@ jobs:
           if (-not $slug) { $slug = "pdes-fwx-updater" }
           $target = "windows:x86_64"
           $body = @{ app_slug = $slug; target = $target } | ConvertTo-Json -Compress
-          $resp = Invoke-RestMethod -Method Post `
-            -Uri "https://apps.palodurosystems.io/api/bootstrap/mint" `
-            -Headers @{ Authorization = "Bearer $($env:PDES_WRITER_API_TOKEN)" } `
-            -ContentType "application/json" `
-            -Body $body
+          try {
+            $resp = Invoke-RestMethod -Method Post `
+              -Uri "https://apps.palodurosystems.io/api/bootstrap/mint" `
+              -Headers @{ Authorization = "Bearer $($env:PDES_WRITER_API_TOKEN)" } `
+              -ContentType "application/json" `
+              -Body $body
+          } catch {
+            $status = $null
+            if ($_.Exception.Response) {
+              $status = [int]$_.Exception.Response.StatusCode
+            }
+            if ($status) {
+              Write-Warning "Bootstrap mint returned HTTP $status; continuing without seed-config.json."
+              if ($status -eq 403) {
+                Write-Warning "Check secrets.PDES_WRITER_API_TOKEN permissions and vars.PDES_APP_SLUG ($slug)."
+              }
+            } else {
+              Write-Warning "Bootstrap mint failed; continuing without seed-config.json. $($_.Exception.Message)"
+            }
+            exit 0
+          }
           $pkgUrl = $resp.pkg_url
           if (-not $pkgUrl) { $pkgUrl = $resp.bootstrap_pkg_url }
           if (-not $pkgUrl) {

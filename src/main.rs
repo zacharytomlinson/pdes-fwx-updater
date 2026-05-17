@@ -4,7 +4,6 @@
 //! Date: 2025-02-12
 //! Cross-platform egui/eframe desktop UI for flashing PDES firmware, handling
 //! probe and USB vectors plus installer bootstrap per platform.
-#![feature(trim_prefix_suffix)]
 #![windows_subsystem = "windows"] // hide console window on Windows in release
 
 mod app_dirs;
